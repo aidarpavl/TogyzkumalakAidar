@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --wood1: #c8893f; --wood2: #a5642a; --wood3: #7a4419;
+    --pit: #5b3212; --pit-hi: #6e3d17; --stone: #fdf6e3; --stone-sh: #d9c9a3;
+    --text: #fff8ec; --accent: #f5b041; --own: #2ecc71; --tuz: #e74c3c; --card: rgba(0,0,0,.18);
+  }
+  body.dark {
+    --wood1: #4a3423; --wood2: #3a281a; --wood3: #24170e;
+    --pit: #1c120a; --pit-hi: #2a1b10; --stone: #f1e4c8; --stone-sh: #b9a77f;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; background: transparent; font-family: "Segoe UI", Roboto, system-ui, sans-serif; }
+  #wrap { width: 100%; max-width: 760px; margin: 0 auto; padding: 4px 2px 8px; user-select: none; }
+  .bar { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+         padding: 6px 10px; border-radius: 12px; margin: 4px 0; color: var(--text);
+         background: linear-gradient(90deg, #3d2412, #5c3518); font-size: clamp(12px, 3.4vw, 16px); }
+  .bar.active { box-shadow: 0 0 0 2px var(--accent), 0 0 18px rgba(245,176,65,.55); }
+  .bar .name { font-weight: 700; display: flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; flex: 0 0 auto; border: 2px solid #0006; }
+  .dot.w { background: #fff; } .dot.b { background: #222; border-color: #fff8; }
+  .bar .clock { font-variant-numeric: tabular-nums; background: #0004; padding: 2px 8px; border-radius: 8px; }
+  .bar .clock.low { background: #c0392b; }
+  .board { position: relative; border-radius: 18px; padding: clamp(6px, 1.6vw, 14px);
+           background: radial-gradient(ellipse at 30% 20%, var(--wood1), var(--wood2) 60%, var(--wood3));
+           box-shadow: inset 0 2px 6px #fff3, inset 0 -4px 10px #0005, 0 8px 22px #0006; }
+  .row { display: grid; grid-template-columns: repeat(9, 1fr); gap: clamp(3px, 1vw, 9px); }
+  .pitwrap { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .num { font-size: clamp(9px, 2.4vw, 13px); color: #fff9; font-weight: 600; height: 1.2em; }
+  .pit { position: relative; width: 100%; aspect-ratio: 1 / 2.15; border-radius: 999px;
+         background: radial-gradient(ellipse at 50% 35%, var(--pit-hi), var(--pit) 70%);
+         box-shadow: inset 0 3px 8px #000a, 0 1px 0 #fff3; display: flex; flex-direction: column;
+         align-items: center; justify-content: flex-start; padding: 12% 8% 26%; overflow: hidden; transition: transform .12s, box-shadow .2s; }
+  .pit.click { cursor: pointer; box-shadow: inset 0 3px 8px #000a, 0 0 0 2px var(--own); }
+  .pit.click:hover, .pit.click:active { transform: translateY(-2px) scale(1.03); }
+  .pit.from { box-shadow: inset 0 3px 8px #000a, 0 0 0 3px #3498db; }
+  .pit.to { box-shadow: inset 0 3px 8px #000a, 0 0 0 3px var(--accent), 0 0 14px var(--accent); }
+  .pit.trail { box-shadow: inset 0 3px 8px #000a, 0 0 0 2px #fff8; }
+  .pit.tuz { background: radial-gradient(ellipse at 50% 35%, #7b1d1d, #3d0b0b 70%); }
+  .pit.tuz::after { content: "✕"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+                    color: var(--tuz); font-size: clamp(18px, 6vw, 40px); font-weight: 900; text-shadow: 0 0 6px #000; }
+  .stones { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px; width: 80%; align-content: start; }
+  .stones.c3 { grid-template-columns: repeat(3, 1fr); width: 94%; gap: 1px; }
+  .st { width: 100%; aspect-ratio: 1; border-radius: 50%;
+        background: radial-gradient(circle at 35% 30%, #fff, var(--stone) 45%, var(--stone-sh)); box-shadow: 0 1px 1px #0007; }
+  .cnt { position: absolute; bottom: 4%; left: 50%; transform: translateX(-50%);
+         background: #000a; color: #fff; border-radius: 10px; padding: 0 6px; font-weight: 700;
+         font-size: clamp(10px, 2.8vw, 15px); min-width: 1.6em; text-align: center; }
+  .pit.big .stones { display: none; }
+  .pit.big .cnt { top: 50%; bottom: auto; transform: translate(-50%, -50%); font-size: clamp(14px, 4.4vw, 24px); background: none; text-shadow: 0 0 4px #000; }
+  .kazans { display: flex; flex-direction: column; gap: clamp(4px, 1.2vw, 8px); margin: clamp(6px, 1.6vw, 12px) 0; }
+  .kazan { position: relative; height: clamp(34px, 9vw, 58px); border-radius: 999px; padding: 4px 56px 4px 14px;
+           background: radial-gradient(ellipse at 50% 30%, var(--pit-hi), var(--pit) 75%);
+           box-shadow: inset 0 3px 8px #000a, 0 1px 0 #fff3; display: flex; align-items: center; overflow: hidden; }
+  .kazan .kst { display: flex; flex-wrap: wrap; align-content: center; gap: 2px; height: 100%; overflow: hidden; }
+  .kazan .kst i { width: clamp(4px, 1.1vw, 7px); height: clamp(4px, 1.1vw, 7px); border-radius: 50%;
+                  background: radial-gradient(circle at 35% 30%, #fff, var(--stone) 50%, var(--stone-sh)); }
+  .kazan .kc { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--accent);
+               font-weight: 800; font-size: clamp(16px, 4.6vw, 26px); text-shadow: 0 1px 2px #000; }
+  .kazan.pulse { animation: pulse .8s ease-out 2; }
+  @keyframes pulse { 0% { box-shadow: inset 0 3px 8px #000a, 0 0 0 0 var(--accent); }
+                     100% { box-shadow: inset 0 3px 8px #000a, 0 0 0 12px transparent; } }
+  .progress { height: 6px; border-radius: 6px; background: #0003; margin: 2px 0 0; overflow: hidden; display: flex; }
+  .progress span { display: block; height: 100%; }
+  .msg { text-align: center; color: #fff8ec; font-weight: 600; font-size: clamp(12px, 3.4vw, 15px);
+         padding: 6px 10px; margin-top: 4px; border-radius: 10px; background: #7a4419; }
+  .msg:empty { display: none; }
+  .disabled .pit.click { opacity: .7; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="wrap"></div>
+<script>
+(function () {
+  const send = (type, data) => window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, data), "*");
+  let args = null, pending = false, lastKey = null;
+
+  function setHeight() {
+    const h = document.getElementById("wrap").getBoundingClientRect().height + 8;
+    send("streamlit:setFrameHeight", { height: Math.ceil(h) });
+  }
+
+  function stonesHTML(n, max) {
+    let s = "";
+    for (let i = 0; i < Math.min(n, max); i++) s += '<div class="st"></div>';
+    return s;
+  }
+
+  function fmtClock(sec) {
+    if (sec == null) return "";
+    sec = Math.max(0, Math.floor(sec));
+    return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
+  }
+
+  function pitHTML(idx, a, clickable, legal) {
+    const s = a.state, n = s.pits[idx];
+    const isTuz = s.tuzdyk[0] === idx || s.tuzdyk[1] === idx;
+    const cls = ["pit"];
+    const canClick = clickable && legal.includes(idx % 9);
+    if (canClick) cls.push("click");
+    if (isTuz) cls.push("tuz");
+    if (n > 18) cls.push("big");
+    if (s.last) { if (s.last.from === idx) cls.push("from"); if (s.last.to === idx) cls.push("to"); }
+    const num = a.show_numbers ? (idx % 9 + 1) : "";
+    return `<div class="pitwrap">${a.numbers_top ? '<div class="num">' + num + "</div>" : ""}
+      <div class="${cls.join(" ")}" data-idx="${idx}" data-move="${canClick ? idx % 9 : ""}">
+        ${a.show_stones && !isTuz ? '<div class="stones' + (n > 10 ? " c3" : "") + '">' + stonesHTML(n, 18) + "</div>" : ""}
+        ${isTuz ? "" : '<div class="cnt">' + n + "</div>"}
+      </div>${a.numbers_top ? "" : '<div class="num">' + num + "</div>"}</div>`;
+  }
+
+  function kazanHTML(p, a, pulse) {
+    const k = a.state.kazan[p];
+    let st = "";
+    for (let i = 0; i < Math.min(k, 162); i++) st += "<i></i>";
+    return `<div class="kazan ${pulse ? "pulse" : ""}"><div class="kst">${st}</div><div class="kc">${k}</div></div>`;
+  }
+
+  function render() {
+    const a = args, s = a.state, b = a.bottom, o = 1 - b;
+    const legal = a.legal || [];
+    const clickable = !!a.clickable && !pending;
+    const key = JSON.stringify([s.pits, s.kazan, s.moves ? s.moves.length : 0]);
+    const changed = key !== lastKey;
+    const pulseP = (changed && s.last && s.last.cap) ? s.last.player : -1;
+
+    let top = "", bot = "";
+    for (let i = 8; i >= 0; i--) top += pitHTML(o * 9 + i, Object.assign({}, a, { numbers_top: true }), false, []);
+    for (let i = 0; i < 9; i++) bot += pitHTML(b * 9 + i, Object.assign({}, a, { numbers_top: false }), clickable && s.turn === b, legal);
+
+    const total = s.kazan[0] + s.kazan[1] || 1;
+    const pb = (s.kazan[b] / 162 * 100).toFixed(1), po = (s.kazan[o] / 162 * 100).toFixed(1);
+    const clocks = a.clocks || null;
+    const clk = (p) => clocks ? `<span class="clock ${clocks[p] < 30 ? "low" : ""}">⏱ ${fmtClock(clocks[p])}</span>` : "";
+    const colorDot = (p) => `<span class="dot ${p === 0 ? "w" : "b"}"></span>`;
+
+    document.getElementById("wrap").innerHTML = `
+      <div class="bar ${s.turn === o && !s.over ? "active" : ""}">
+        <span class="name">${colorDot(o)}${a.names[o]}</span>${clk(o)}<span>🏺 ${s.kazan[o]}</span>
+      </div>
+      <div class="board ${pending ? "disabled" : ""}">
+        <div class="row">${top}</div>
+        <div class="kazans">${kazanHTML(o, a, pulseP === o)}${kazanHTML(b, a, pulseP === b)}</div>
+        <div class="row">${bot}</div>
+      </div>
+      <div class="progress"><span style="width:${pb}%;background:#2ecc71"></span><span style="flex:1"></span><span style="width:${po}%;background:#e74c3c"></span></div>
+      <div class="bar ${s.turn === b && !s.over ? "active" : ""}">
+        <span class="name">${colorDot(b)}${a.names[b]}</span>${clk(b)}<span>🏺 ${s.kazan[b]}</span>
+      </div>
+      <div class="msg">${a.message || ""}</div>`;
+
+    document.body.classList.toggle("dark", a.theme === "dark");
+    document.querySelectorAll(".pit.click").forEach(el => {
+      el.addEventListener("click", () => {
+        if (pending) return;
+        pending = true;
+        el.style.transform = "scale(.92)";
+        send("streamlit:setComponentValue", { value: { move: parseInt(el.dataset.move), nonce: Date.now() + Math.random() }, dataType: "json" });
+        render();
+      });
+    });
+
+    // Тарату ізі (анимация)
+    if (changed && lastKey !== null && s.last && a.animate) {
+      const path = [];
+      let i = s.last.from;
+      for (let g = 0; g < 18; g++) { path.push(i); if (i === s.last.to) break; i = (i + 1) % 18; }
+      path.forEach((idx, k) => setTimeout(() => {
+        const el = document.querySelector(`.pit[data-idx="${idx}"]`);
+        if (el && !el.classList.contains("to")) { el.classList.add("trail"); setTimeout(() => el.classList.remove("trail"), 260); }
+      }, k * 70));
+    }
+    lastKey = key;
+
+    // Уақыт санауышы (тек көрсету үшін)
+    if (clocks && !s.over && a.clock_running) {
+      clearInterval(window.__clk);
+      const startedAt = Date.now(), base = clocks.slice();
+      window.__clk = setInterval(() => {
+        const el = document.querySelectorAll(".clock");
+        const elapsed = (Date.now() - startedAt) / 1000;
+        const live = base.slice(); live[s.turn] = base[s.turn] - elapsed;
+        // жоғарғы — o, төменгі — b
+        if (el[0]) el[0].textContent = "⏱ " + fmtClock(live[o]);
+        if (el[1]) el[1].textContent = "⏱ " + fmtClock(live[b]);
+      }, 500);
+    }
+    setHeight();
+  }
+
+  window.addEventListener("message", (ev) => {
+    const d = ev.data;
+    if (!d || d.type !== "streamlit:render") return;
+    const newArgs = d.args;
+    // Жаңа күй келсе — pending алынады
+    if (!args || JSON.stringify(newArgs.state) !== JSON.stringify(args.state) || newArgs.token !== args.token) pending = false;
+    args = newArgs;
+    render();
+  });
+  window.addEventListener("resize", () => args && setHeight());
+  send("streamlit:componentReady", { apiVersion: 1 });
+})();
+</script>
+</body>
+</html>
