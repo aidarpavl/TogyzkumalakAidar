@@ -51,6 +51,7 @@ def start_ai(spec: Spec, level: str, color: str, rated: bool, opts: dict, champ_
         "rated": bool(rated and is_registered() and level != "llm" and not champ_id), "names": names,
         "history": [], "recorded": False, "delta": None, "hint": None, "coach": None, "note": None,
         "champ": champ_id, "champ_msg": None, "gid": random.randint(1, 10**9)}
+    spec.after_start(ss.games[spec.key])
 
 
 def start_local(spec: Spec, n1: str, n2: str, opts: dict):
@@ -59,6 +60,7 @@ def start_local(spec: Spec, n1: str, n2: str, opts: dict):
         "rated": False, "names": [n1 or tr("white"), n2 or tr("black")], "history": [], "recorded": False,
         "delta": None, "hint": None, "coach": None, "note": None, "champ": None, "champ_msg": None,
         "gid": random.randint(1, 10**9)}
+    spec.after_start(ss.games[spec.key])
 
 
 def abandon(g: dict):
@@ -108,6 +110,10 @@ def finish(spec: Spec, g: dict):
         else:
             db.finish_champ(g["champ"], "loss", 0)
             g["champ_msg"] = tr("champ_loss")
+    msgs = spec.rewards(s, [(g["names"][0], human == 0 and is_registered()), (g["names"][1], human == 1 and is_registered())],
+                        g["level"], bool(g.get("champ")), "ai")
+    if msgs:
+        g["champ_msg"] = ((g.get("champ_msg") or "") + " · " + " · ".join(msgs)).strip(" ·")
     if s["winner"] == human:
         st.balloons()
 
@@ -224,8 +230,8 @@ def online_lobby(spec: Spec):
         with st.form(f"create_room_{spec.key}"):
             st.markdown(f"**{tr('create_room')}**")
             opts = spec.options_ui(f"room_{spec.key}")
-            color = st.radio(tr("color"), ["random", "white", "black"], horizontal=True,
-                             format_func=lambda c: tr(f"col_{c}"), key=f"room_color_{spec.key}")
+            color = st.radio(tr("role") if spec.key == "kyzkuu" else tr("color"), ["random", "white", "black"],
+                             horizontal=True, format_func=spec.color_label, key=f"room_color_{spec.key}")
             tc = st.selectbox(tr("time_control"), TC_OPTIONS, index=2, format_func=tc_label, key=f"tc_{spec.key}")
             rated = st.toggle(tr("rated"), value=is_registered(), disabled=not is_registered(), key=f"rt_{spec.key}")
             private = st.toggle(tr("private"), value=False, key=f"pv_{spec.key}")
@@ -312,6 +318,8 @@ def _finalize_online(spec: Spec, room: dict, state: dict):
                          white_reg=not room["white_guest"], black_reg=not room["black_guest"],
                          rated=bool(room["rated"]))
     state["deltas"] = [res["delta_w"], res["delta_b"]]
+    state["bonus_msg"] = " · ".join(spec.rewards(state, [(room["white"], not room["white_guest"]),
+                                                          (room["black"], not room["black_guest"])], None, False, "online"))
     db.patch_room_state(room["id"], state)
 
 
@@ -366,6 +374,11 @@ def room_live(gkey: str):
         spec.render(s, me if me is not None else 0, names, False, key=f"{gkey}_room_wait", room=room["id"])
         return
 
+    ready = spec.on_active(room)
+    if ready is not None:
+        db.save_room_state(room, ready, room["clock_w"], room["clock_b"])
+        st.rerun(scope="fragment")
+
     clocks = _live_clocks(room)
     if clocks and room["status"] == "active" and not s["over"] and clocks[s["turn"]] <= 0:
         s["over"], s["winner"], s["reason"] = True, 1 - s["turn"], "timeout"
@@ -407,6 +420,8 @@ def room_live(gkey: str):
         d = s.get("deltas")
         if d and me is not None and d[me]:
             st.markdown(f"<center><b>{tr('rating_change', d=d[me])}</b></center>", unsafe_allow_html=True)
+        if s.get("bonus_msg"):
+            st.markdown(f"<div class='champbadge'>{s['bonus_msg']}</div>", unsafe_allow_html=True)
         if me is not None and not ss.get(f"_ball_{room['id']}") and s["winner"] == me:
             ss[f"_ball_{room['id']}"] = True
             st.balloons()
@@ -483,8 +498,8 @@ def play_page(spec: Spec):
                     st.caption(tr("key_status_on", p=f"{ss.llm['provider']} · {ss.llm['model']}"))
                 else:
                     st.warning(tr("need_key"))
-            color = st.radio(tr("color"), ["white", "black", "random"], horizontal=True,
-                             format_func=lambda c: tr(f"col_{c}"), key=f"col_{spec.key}")
+            color = st.radio(tr("role") if spec.key == "kyzkuu" else tr("color"), ["white", "black", "random"],
+                             horizontal=True, format_func=spec.color_label, key=f"col_{spec.key}")
             rated = st.toggle(tr("rated"), value=False, disabled=not is_registered() or level == "llm",
                               key=f"rated_{spec.key}", help=tr("guest_note") if not is_registered() else None)
             st.caption(tr("home_free"))
@@ -501,8 +516,10 @@ def play_page(spec: Spec):
         with st.form(f"local_form_{spec.key}"):
             opts = spec.options_ui(f"loc_{spec.key}")
             c1, c2 = st.columns(2)
-            n1 = c1.text_input(f"⚪ {tr('white')}", value=ss.user or tr("white"))
-            n2 = c2.text_input(f"⚫ {tr('black')}", value=tr("black"))
+            n1 = c1.text_input(spec.color_label("white") if spec.key == "kyzkuu" else f"⚪ {tr('white')}",
+                               value=ss.user or tr("white"))
+            n2 = c2.text_input(spec.color_label("black") if spec.key == "kyzkuu" else f"⚫ {tr('black')}",
+                               value=tr("black"))
             if st.form_submit_button(tr("start"), type="primary", use_container_width=True):
                 start_local(spec, n1, n2, opts)
                 st.rerun()

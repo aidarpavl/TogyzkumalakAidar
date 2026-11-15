@@ -11,7 +11,7 @@ import re  # noqa: E402
 import sys  # noqa: E402
 from pathlib import Path  # noqa: E402
 
-REQUIRED = "2.1"
+REQUIRED = "2.2"
 _ROOT = Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path[:1]:
     sys.path.insert(0, str(_ROOT))
@@ -47,7 +47,7 @@ else:
     st.markdown(
         f"- Табылған нұсқа / найдена версия: **{_fv or '—'}**, керек / нужна: **{REQUIRED}**\n"
         f"- `core/` ішінде / в `core/`: `{', '.join(_files) or 'жоқ / нет'}`\n"
-        f"- Керек файлдар / нужные файлы: `__init__.py, asyk.py, db.py, draughts.py, engine.py, i18n.py, jamby.py, llm.py`\n"
+        f"- Керек файлдар / нужные файлы: `__init__.py, asyk.py, db.py, draughts.py, engine.py, i18n.py, jamby.py, kyzkuu.py, llm.py`\n"
         f"- `core/__init__.py` ішінде дәл осы жол болуы керек / в `core/__init__.py` должна быть строка: "
         f"`VERSION = \"{REQUIRED}\"`\n"
         f"- Файлдарды ауыстырғаннан кейін: **Manage app → ⋮ → Reboot app** / после замены: **Manage app → ⋮ → Reboot app**")
@@ -86,11 +86,13 @@ def header():
 
 def game_page(gk: str):
     spec = SPECS[gk]
-    subs = ["play"] + (["puzzles"] if gk == "togyz" else []) + ["rules"]
+    subs = ["play"] + (["puzzles"] if gk == "togyz" else []) + (["upgrade"] if gk == "kyzkuu" else []) + ["rules"]
     sub = st.radio("sub", subs, horizontal=True, key=f"sub_{gk}", label_visibility="collapsed",
                    format_func=lambda x: tr(f"nav_{x}"))
     if sub == "play":
         play_page(spec)
+    elif sub == "upgrade":
+        pages.upgrade_page()
     elif sub == "puzzles":
         from ui.togyz_extra import puzzles_page  # noqa: WPS433
         puzzles_page()
@@ -126,11 +128,11 @@ if qp_room:
         ss["_goto"] = gk
     st.query_params.clear()
 
-PAGES = ["home", "togyz", "asyk", "doyby", "jamby", "champ", "rating", "profile", "settings"]
+PAGES = ["home", "togyz", "asyk", "doyby", "jamby", "kyzkuu", "champ", "rating", "profile", "settings"]
 if is_admin():
     PAGES.append("admin")
 LABELS = {"home": tr("nav_home"), "togyz": "⚫ " + tr("game_togyz"), "asyk": "🦴 " + tr("game_asyk"),
-          "doyby": "♛ " + tr("game_doyby"), "jamby": "🏹 " + tr("game_jamby"), "champ": tr("nav_champ"), "rating": tr("nav_rating"),
+          "doyby": "♛ " + tr("game_doyby"), "jamby": "🏹 " + tr("game_jamby"), "kyzkuu": "🐎 " + tr("game_kyzkuu"), "champ": tr("nav_champ"), "rating": tr("nav_rating"),
           "profile": tr("nav_profile"), "settings": tr("nav_settings"), "admin": tr("nav_admin")}
 
 goto = ss.pop("_goto", None)
@@ -159,7 +161,7 @@ elif page == "admin":
 
 st.divider()
 fc1, fc2 = st.columns([4, 1])
-fc1.caption("Ұлттық ойындар · Тоғызқұмалақ · Асық ату · Дойбы · Жамбы ату · 2026")
+fc1.caption("Ұлттық ойындар · Тоғызқұмалақ · Асық ату · Дойбы · Жамбы ату · Қыз қуу · 2026")
 if fc2.button(tr("logout"), use_container_width=True):
     for g in list(ss.games.values()):
         abandon(g)

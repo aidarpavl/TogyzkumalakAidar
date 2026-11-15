@@ -114,6 +114,8 @@ RULES_BY_GAME = {
               "':' marks a capture path, '-' a simple move."),
     "jamby": ("Zhamby atu: horseback archery. The archer gallops past a target; the bow bobs with the horse's gait; "
               "wind drifts arrows sideways. You choose the release moment; the aim is then set automatically."),
+    "kyzkuu": ("Kyz kuu: a horse chase. You choose a whipping style: each whip speeds the horse for 0.6 s but costs "
+               "4 stamina; below 15 stamina the horse tires. Pick the style that wins the chase."),
     "asyk": ("Asyk atu (Kazakh knucklebones): asyks stand inside a ring; you shoot your heavy saqa from the "
              "bottom line; asyks knocked out of the ring are yours; if you capture any, you shoot again."),
 }

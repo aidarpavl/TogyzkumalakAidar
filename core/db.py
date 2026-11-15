@@ -21,7 +21,7 @@ _URL = None
 _PG = False
 _INIT = False
 
-GAMES = ("togyz", "asyk", "doyby", "jamby")
+GAMES = ("togyz", "asyk", "doyby", "jamby", "kyzkuu")
 
 # Чемпионат параметрлері (settings кестесі арқылы өзгертуге болады)
 DEFAULTS = {
@@ -32,6 +32,8 @@ DEFAULTS = {
     "kaspi_phone": "",
     "kaspi_name": "",
     "kaspi_qr": "",           # base64 PNG/JPEG
+    "upgrade_price": "100",   # Қыз қуу: атты бір рет жетілдіру, ₸
+    "upgrade_qr": "",         # жетілдіруге бөлек QR (бос болса — kaspi_qr)
 }
 
 SCHEMA = [
@@ -149,6 +151,15 @@ SCHEMA = [
         created DOUBLE PRECISION NOT NULL,
         finished DOUBLE PRECISION
     )""",
+    """CREATE TABLE IF NOT EXISTS horses (
+        username TEXT PRIMARY KEY,
+        burst DOUBLE PRECISION NOT NULL DEFAULT 1,
+        speed DOUBLE PRECISION NOT NULL DEFAULT 1,
+        stamina DOUBLE PRECISION NOT NULL DEFAULT 1,
+        reverse DOUBLE PRECISION NOT NULL DEFAULT 1,
+        bonus INTEGER NOT NULL DEFAULT 0,
+        upgrades INTEGER NOT NULL DEFAULT 0
+    )""",
     """CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -166,6 +177,8 @@ SCHEMA = [
 MIGRATIONS = [
     ("games", "game", "TEXT NOT NULL DEFAULT 'togyz'"),
     ("rooms", "game", "TEXT NOT NULL DEFAULT 'togyz'"),
+    ("payments", "kind", "TEXT NOT NULL DEFAULT 'attempts'"),
+    ("payments", "qty", "INTEGER NOT NULL DEFAULT 1"),
 ]
 
 
@@ -550,12 +563,19 @@ def champ_history(username: str, limit: int = 30) -> list[dict]:
 
 # ---------------------------------------------------------------- Payments
 
-def create_payment(username: str, receipt: str, image_b64: str | None) -> str:
+def create_payment(username: str, receipt: str, image_b64: str | None, kind: str = "attempts",
+                   qty: int = 1) -> str:
+    """kind: 'attempts' — чемпионат әрекеттері; 'upg_<stat>' — Қыз қуу атын жетілдіру (qty рет)."""
     pid = new_id(10)
-    execute("INSERT INTO payments (id, username, amount, attempts, receipt, image, status, created) "
-            "VALUES (?,?,?,?,?,?,?,?)",
-            (pid, username, int_setting("price"), int_setting("attempts_per_pay"), receipt.strip()[:100],
-             image_b64, "pending", time.time()))
+    qty = max(1, min(50, int(qty)))
+    if kind == "attempts":
+        amount, att = int_setting("price"), int_setting("attempts_per_pay")
+        qty = 1
+    else:
+        amount, att = int_setting("upgrade_price") * qty, 0
+    execute("INSERT INTO payments (id, username, amount, attempts, receipt, image, status, created, kind, qty) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (pid, username, amount, att, receipt.strip()[:100], image_b64, "pending", time.time(), kind, qty))
     return pid
 
 
@@ -587,9 +607,49 @@ def decide_payment(pid: str, approve: bool, admin: str, note: str = "") -> bool:
                 ("approved" if approve else "rejected", admin, note, time.time(), pid))
     if n and approve:
         _ensure_wallet(row["username"])
-        execute("UPDATE wallet SET attempts = attempts + ?, paid_total = paid_total + ? WHERE username = ?",
-                (row["attempts"], row["amount"], row["username"]))
+        kind = row.get("kind") or "attempts"
+        if kind.startswith("upg_"):
+            upgrade_horse(row["username"], kind[4:], int(row.get("qty") or 1))
+            execute("UPDATE wallet SET paid_total = paid_total + ? WHERE username = ?",
+                    (row["amount"], row["username"]))
+        else:
+            execute("UPDATE wallet SET attempts = attempts + ?, paid_total = paid_total + ? WHERE username = ?",
+                    (row["attempts"], row["amount"], row["username"]))
     return bool(n)
+
+
+# ---------------------------------------------------------------- Қыз қуу: ат
+
+HORSE_STATS = ("burst", "speed", "stamina", "reverse")
+
+
+def get_horse(username: str) -> dict:
+    execute("INSERT INTO horses (username) VALUES (?) ON CONFLICT (username) DO NOTHING", (username,))
+    return execute("SELECT * FROM horses WHERE username = ?", (username,), "one")
+
+
+def upgrade_horse(username: str, stat: str, times: int = 1, pct: float = 5.0) -> None:
+    if stat not in HORSE_STATS:
+        return
+    get_horse(username)
+    f = (1 + pct / 100.0) ** max(1, int(times))
+    execute(f"UPDATE horses SET {stat} = {stat} * ?, upgrades = upgrades + ? WHERE username = ?",
+            (f, int(times), username))
+
+
+def add_horse_bonus(username: str, pct: int) -> None:
+    get_horse(username)
+    execute("UPDATE horses SET bonus = bonus + ? WHERE username = ?", (int(pct), username))
+
+
+def apply_horse_bonus(username: str, stat: str) -> int:
+    """Жиналған бонус %-ын таңдалған көрсеткішке қосу."""
+    h = get_horse(username)
+    if stat not in HORSE_STATS or h["bonus"] <= 0:
+        return 0
+    n = execute(f"UPDATE horses SET {stat} = {stat} * ?, bonus = 0 WHERE username = ? AND bonus = ?",
+                (1 + h["bonus"] / 100.0, username, h["bonus"]))
+    return h["bonus"] if n else 0
 
 
 # ---------------------------------------------------------------- Fund / withdrawals

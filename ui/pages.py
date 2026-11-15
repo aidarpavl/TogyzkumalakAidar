@@ -16,7 +16,7 @@ from ui.play import abandon, start_ai
 from ui.specs import SPECS
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
-GAME_KEYS = ["togyz", "asyk", "doyby", "jamby"]
+GAME_KEYS = ["togyz", "asyk", "doyby", "jamby", "kyzkuu"]
 NAME_RE = re.compile(r"^[A-Za-zА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі0-9_]{3,20}$")
 PHONE_RE = re.compile(r"^\+?[78]\d{10}$")
 
@@ -33,15 +33,17 @@ def home_page(public: bool = False):
     c1.image(str(ASSETS / "togyz.png"), use_container_width=True)
     c2.image(str(ASSETS / "asyk.png"), use_container_width=True)
     st.markdown("<div class='ornament'></div>", unsafe_allow_html=True)
-    cols = st.columns(4)
-    icons = {"togyz": "⚫⚪", "asyk": "🦴", "doyby": "♛", "jamby": "🏹🐎"}
-    for col, gk in zip(cols, GAME_KEYS):
-        with col:
-            st.markdown(f"<div class='gamecard gc-{gk}'><div class='ico'>{icons[gk]}</div>"
-                        f"<h3>{tr('game_' + gk)}</h3><p>{tr('desc_' + gk)}</p></div>", unsafe_allow_html=True)
-            if st.button(f"{tr('game_' + gk)} — {tr('open_game')}", key=f"home_{gk}", type="primary",
-                         use_container_width=True, disabled=public):
-                goto(gk)
+    icons = {"togyz": "⚫⚪", "asyk": "🦴", "doyby": "♛", "jamby": "🏹🐎", "kyzkuu": "👧🐎🤠"}
+    rows = [GAME_KEYS[:3], GAME_KEYS[3:]]
+    for row in rows:
+        cols = st.columns(3)
+        for col, gk in zip(cols, row):
+            with col:
+                st.markdown(f"<div class='gamecard gc-{gk}'><div class='ico'>{icons[gk]}</div>"
+                            f"<h3>{tr('game_' + gk)}</h3><p>{tr('desc_' + gk)}</p></div>", unsafe_allow_html=True)
+                if st.button(f"{tr('game_' + gk)} — {tr('open_game')}", key=f"home_{gk}", type="primary",
+                             use_container_width=True, disabled=public):
+                    goto(gk)
     st.markdown(f"<div class='card'>{tr('home_free')}<br>{tr('home_champ')}</div>", unsafe_allow_html=True)
     if not public and is_registered():
         if st.button(tr("nav_champ"), use_container_width=True, key="home_champ"):
@@ -156,7 +158,7 @@ def profile_page():
         st.info(tr("profile_guest"))
         return
     st.markdown(f"### 👤 {esc(ss.user)}")
-    cols = st.columns(4)
+    cols = st.columns(len(GAME_KEYS))
     for col, gk in zip(cols, GAME_KEYS):
         r = db.get_rating(ss.user, gk)
         rank = db.user_rank(ss.user, gk)
@@ -302,8 +304,8 @@ def champ_page():
         opts = spec.options_ui("champ")
         level = st.radio(tr("level"), list(LEVEL_POINTS), horizontal=True, key="champ_level",
                          format_func=lambda lv: f"{lvl_name(lv)} (+{LEVEL_POINTS[lv]})")
-        color = st.radio(tr("color"), ["white", "black", "random"], horizontal=True,
-                         format_func=lambda c: tr(f"col_{c}"), key="champ_color")
+        color = st.radio(tr("role") if gk == "kyzkuu" else tr("color"), ["white", "black", "random"],
+                         horizontal=True, format_func=spec.color_label, key="champ_color")
         if w["attempts"] < 1:
             st.info(tr("champ_need"))
         if st.button(tr("champ_start"), type="primary", use_container_width=True, disabled=w["attempts"] < 1):
@@ -353,7 +355,7 @@ def champ_page():
                     else:
                         db.create_payment(ss.user, receipt, img)
                         st.success(tr("pay_sent"))
-            mine = db.payments(username=ss.user, limit=20)
+            mine = [p for p in db.payments(username=ss.user, limit=40) if (p.get("kind") or "attempts") == "attempts"]
             if mine:
                 st.markdown(f"**{tr('my_payments')}**")
                 st.dataframe([{tr("date"): dt.datetime.fromtimestamp(p["created"]).strftime("%d.%m %H:%M"),
@@ -418,7 +420,10 @@ def admin_page():
                 a, b = st.columns([1, 1.4])
                 if p["image"]:
                     a.image(base64.b64decode(p["image"]), use_container_width=True)
-                b.markdown(f"**{esc(p['username'])}** · {p['amount']} ₸ → {p['attempts']} 🎟<br>"
+                kind = p.get("kind") or "attempts"
+                what = (f"{p['attempts']} 🎟" if kind == "attempts"
+                        else f"🐎 {tr('upg_' + kind[4:])} ×{p.get('qty') or 1}")
+                b.markdown(f"**{esc(p['username'])}** · {p['amount']} ₸ → {what}<br>"
                            f"🧾 `{esc(p['receipt'] or '—')}`<br>"
                            f"{dt.datetime.fromtimestamp(p['created']).strftime('%d.%m.%Y %H:%M')}",
                            unsafe_allow_html=True)
@@ -432,6 +437,7 @@ def admin_page():
         if done:
             st.dataframe([{tr("date"): dt.datetime.fromtimestamp(p["created"]).strftime("%d.%m %H:%M"),
                            tr("user"): p["username"], tr("amount"): p["amount"], "🧾": p["receipt"],
+                           "": tr("kind_attempts") if (p.get("kind") or "attempts") == "attempts" else tr("kind_upg"),
                            tr("status"): _status(p["status"])} for p in done], hide_index=True,
                          use_container_width=True)
     with t2:
@@ -467,9 +473,14 @@ def admin_page():
             att = c2.number_input(tr("att_per_pay"), 1, 100, db.int_setting("attempts_per_pay"))
             share = c1.number_input(tr("fund_share"), 0, 100, db.int_setting("fund_share"))
             minw = c2.number_input(tr("min_withdraw"), 1, 1_000_000, db.int_setting("min_withdraw"))
+            upg_price = c1.number_input(tr("adm_upg_price"), 10, 100000, db.int_setting("upgrade_price"), step=10)
+            up2 = st.file_uploader(tr("adm_upg_qr"), type=["png", "jpg", "jpeg", "webp"], key="upg_qr_up")
             if st.form_submit_button(tr("save"), type="primary"):
                 if up is not None:
                     db.set_setting("kaspi_qr", base64.b64encode(up.getvalue()).decode())
+                if up2 is not None:
+                    db.set_setting("upgrade_qr", base64.b64encode(up2.getvalue()).decode())
+                db.set_setting("upgrade_price", upg_price)
                 for k, v in (("kaspi_phone", phone), ("kaspi_name", name), ("price", price),
                              ("attempts_per_pay", att), ("fund_share", share), ("min_withdraw", minw)):
                     db.set_setting(k, v)
@@ -490,3 +501,68 @@ def admin_page():
         rows = db.execute("SELECT * FROM wallet ORDER BY paid_total DESC, earned DESC LIMIT 200", (), "all")
         if rows:
             st.dataframe(rows, hide_index=True, use_container_width=True)
+
+
+# ---------------------------------------------------------------- Қыз қуу: атты жетілдіру
+
+def upgrade_page():
+    from core import kyzkuu  # noqa: WPS433
+
+    st.markdown(f"### {tr('upg_title')}")
+    if not is_registered():
+        st.info(tr("upg_need_reg"))
+        return
+    h = db.get_horse(ss.user)
+    stats = kyzkuu.stats_from_mult(h)
+    units = {"burst": tr("kmh"), "speed": tr("kmh"), "stamina": "", "reverse": tr("kmh")}
+    cols = st.columns(4)
+    for col, k in zip(cols, kyzkuu.STATS):
+        pct = (h[k] - 1) * 100
+        col.metric(tr(f"upg_{k}"), f"{stats[k]:.1f} {units[k]}".strip(), f"+{pct:.1f}%" if pct > 0.05 else None)
+    st.caption(tr("upg_rules"))
+    if h["bonus"] > 0:
+        with st.container(border=True):
+            st.markdown(tr("upg_bonus", p=h["bonus"]))
+            stat = st.radio(tr("upg_which"), list(kyzkuu.STATS), horizontal=True, key="bonus_stat",
+                            format_func=lambda k: tr(f"upg_{k}"))
+            if st.button(tr("upg_apply"), type="primary"):
+                n = db.apply_horse_bonus(ss.user, stat)
+                if n:
+                    st.success(tr("upg_applied", p=n))
+                    st.rerun()
+    price = db.int_setting("upgrade_price")
+    st.markdown(f"#### 💳 {tr('upg_buy')} · {tr('upg_each', p=price)}")
+    c1, c2 = st.columns([1, 1.2])
+    with c1:
+        qr = db.get_setting("upgrade_qr") or db.get_setting("kaspi_qr")
+        if qr:
+            st.image(base64.b64decode(qr), use_container_width=True)
+        else:
+            st.warning(tr("qr_missing"))
+        phone, name = db.get_setting("kaspi_phone"), db.get_setting("kaspi_name")
+        if phone:
+            st.markdown(tr("kaspi_transfer") + (f" ({esc(name)})" if name else ""))
+            st.code(phone, language=None)
+    with c2:
+        with st.form("upg_form", clear_on_submit=True):
+            stat = st.selectbox(tr("upg_which"), list(kyzkuu.STATS), format_func=lambda k: tr(f"upg_{k}"))
+            qty = st.number_input(tr("upg_qty"), 1, 50, 1)
+            st.markdown(tr("upg_total", a=price * int(qty), s=tr(f"upg_{stat}"), q=int(qty)))
+            receipt = st.text_input(tr("receipt"))
+            up = st.file_uploader(tr("upload_check"), type=["png", "jpg", "jpeg", "webp"])
+            if st.form_submit_button(tr("send_pay"), type="primary", use_container_width=True):
+                img = _img_b64(up)
+                if not receipt.strip() and not img:
+                    st.error(tr("pay_need"))
+                elif receipt.strip() and db.receipt_used(receipt):
+                    st.error(tr("pay_dup"))
+                else:
+                    db.create_payment(ss.user, receipt, img, kind=f"upg_{stat}", qty=int(qty))
+                    st.success(tr("upg_sent"))
+        mine = [p for p in db.payments(username=ss.user, limit=40) if (p.get("kind") or "").startswith("upg_")]
+        if mine:
+            st.markdown(f"**{tr('my_payments')}**")
+            st.dataframe([{tr("date"): dt.datetime.fromtimestamp(p["created"]).strftime("%d.%m %H:%M"),
+                           tr("upg_which"): f"{tr('upg_' + p['kind'][4:])} ×{p.get('qty') or 1}",
+                           tr("amount"): f"{p['amount']} ₸", tr("status"): _status(p["status"])} for p in mine],
+                         hide_index=True, use_container_width=True)

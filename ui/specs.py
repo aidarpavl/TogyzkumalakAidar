@@ -7,8 +7,8 @@ from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import asyk, draughts, engine, jamby, llm
-from core.i18n import RULES, RULES_ASYK, RULES_DOYBY, RULES_JAMBY
+from core import asyk, db, draughts, engine, jamby, kyzkuu, llm
+from core.i18n import RULES, RULES_ASYK, RULES_DOYBY, RULES_JAMBY, RULES_KYZKUU
 from ui.common import ss, take, tick, tr
 
 _ROOT = Path(__file__).resolve().parent.parent / "components"
@@ -16,6 +16,7 @@ _togyz = components.declare_component("togyz_board", path=str(_ROOT / "board"))
 _draughts = components.declare_component("draughts_board", path=str(_ROOT / "draughts"))
 _asyk = components.declare_component("asyk_field", path=str(_ROOT / "asyk"))
 _jamby = components.declare_component("jamby_field", path=str(_ROOT / "jamby"))
+_kyzkuu = components.declare_component("kyzkuu_field", path=str(_ROOT / "kyzkuu"))
 
 
 class Spec:
@@ -68,6 +69,19 @@ class Spec:
 
     def move_list(self, s) -> list[str]:
         return s.get("moves", [])
+
+    def color_label(self, c: str) -> str:
+        return tr(f"col_{c}")
+
+    # Қосымша ілмектер (Қыз қуу үшін)
+    def after_start(self, g: dict) -> None:
+        pass
+
+    def on_active(self, room: dict):
+        return None
+
+    def rewards(self, s: dict, players: list, level: str | None, champ: bool, mode: str) -> list[str]:
+        return []
 
 
 # ---------------------------------------------------------------- Тоғызқұмалақ
@@ -336,4 +350,138 @@ class Jamby(Spec):
         return 1.9
 
 
-SPECS = {"togyz": Togyz(), "asyk": Asyk(), "doyby": Doyby(), "jamby": Jamby()}
+# ---------------------------------------------------------------- Қыз қуу
+
+def _horse_stats(name: str | None, registered: bool) -> dict:
+    if name and registered:
+        try:
+            return kyzkuu.stats_from_mult(db.get_horse(name))
+        except Exception:  # noqa: BLE001
+            pass
+    return dict(kyzkuu.BASE)
+
+
+class Kyzkuu(Spec):
+    key = "kyzkuu"
+    icon = "🐎"
+
+    def rules(self, lang):
+        return RULES_KYZKUU[lang]
+
+    def color_label(self, c):
+        return {"white": tr("role_girl"), "black": tr("role_jigit")}.get(c, tr("col_random"))
+
+    def new_state(self, opts=None):
+        return kyzkuu.new_state(opts)
+
+    def after_start(self, g):
+        s = g["state"]
+        if g["mode"] == "ai":
+            h, a = g["human"], 1 - g["human"]
+            s["stats"][h] = _horse_stats(g["names"][h], not ss.guest)
+            s["stats"][a] = kyzkuu.ai_stats(g["level"] if g["level"] in kyzkuu.AI_STYLE else "hard")
+            lvl = g["level"] if g["level"] in kyzkuu.AI_STYLE else "medium"
+            s["ai_plan"] = {str(st): kyzkuu.ai_taps(s["stats"][a], st, lvl) for st in (0, 1)}
+        else:
+            for p in (0, 1):
+                s["stats"][p] = _horse_stats(g["names"][p], g["names"][p] == ss.user and not ss.guest)
+        s["ready"] = True
+
+    def on_active(self, room):
+        s = room["state"]
+        if s.get("ready") or room["status"] != "active":
+            return None
+        s["stats"] = [_horse_stats(room["white"], not room["white_guest"]),
+                      _horse_stats(room["black"], not room["black_guest"])]
+        s["ready"] = True
+        return s
+
+    def apply(self, s, mv):
+        return kyzkuu.play(s, {"taps": list(mv.get("taps", []))})
+
+    def ai(self, s, level):
+        plan = s.get("ai_plan") or {}
+        taps = plan.get(str(s["stage"]))
+        if taps is None:
+            taps = kyzkuu.ai_taps(s["stats"][s["turn"]], s["stage"], level if level in kyzkuu.AI_STYLE else "medium")
+        return {"taps": taps}
+
+    def _ghost(self, s, me):
+        stage, opp = s["stage"], 1 - me
+        got = s["inputs"][stage].get(str(opp))
+        if got is not None:
+            return got
+        plan = s.get("ai_plan")
+        if plan:
+            return plan.get(str(stage), [])
+        return kyzkuu.ai_taps(s["stats"][opp], stage, "medium")
+
+    def llm_move(self, cfg, s):
+        styles = list(kyzkuu.AI_STYLE)
+        opts = [f"whip every {kyzkuu.AI_STYLE[k][0]} s, rest below {kyzkuu.AI_STYLE[k][1]} stamina until "
+                f"{kyzkuu.AI_STYLE[k][2]}" for k in styles]
+        role = "fleeing" if kyzkuu.fleer(s["stage"]) == s["turn"] else "chasing"
+        pos = f"Stage {s['stage'] + 1}, you are {role}. Your horse: {s['stats'][s['turn']]}. Opponent: {s['stats'][1 - s['turn']]}."
+        k = llm.choose_option(cfg, "kyzkuu", pos, opts)
+        if k is None:
+            return None
+        return {"taps": kyzkuu.ai_taps(s["stats"][s["turn"]], s["stage"], styles[k])}
+
+    def render(self, s, bottom, names, clickable, key, message="", clocks=None, clock_running=False, room=""):
+        me = bottom
+        view = {k: v for k, v in s.items() if k != "ai_plan"}
+        val = _kyzkuu(state=view, me=me, names=names, clickable=clickable, message=message,
+                      ghost=self._ghost(s, me) if clickable else [],
+                      labels={"side": tr("kk_side"), "front": tr("kk_front"), "rear": tr("kk_rear"),
+                              "speed": tr("kk_speed"), "stamina": tr("kk_stamina"), "gap": tr("kk_gap"),
+                              "left": tr("kk_left"), "start": tr("kk_start"), "whip": tr("kk_whip"),
+                              "wait": tr("kk_wait"), "kiss": tr("kk_kiss"), "whipHit": tr("kk_whiphit"),
+                              "escaped": tr("kk_escaped"), "kmh": tr("kmh")},
+                      room=room, token=tick(), key=key, default=None)
+        v = take(val, key)
+        if v and clickable:
+            return {"taps": v.get("taps", [])}
+        return None
+
+    def score(self, s):
+        return s["points"]
+
+    def status(self, s, names):
+        if s["over"]:
+            return ""
+        f = kyzkuu.fleer(s["stage"])
+        who = names[f]
+        txt = tr("kk_stage", n=s["stage"] + 1, who=who)
+        if s.get("last"):
+            lm = s["last"]
+            txt = (tr("kk_kiss") if lm["stage"] == 0 else tr("kk_whiphit")) if lm["caught"] else tr("kk_escaped")
+            txt += " · " + tr("kk_stage", n=s["stage"] + 1, who=who)
+        return txt
+
+    def hint(self, s):
+        return tr("kk_hint")
+
+    def coach(self, cfg, s, lang):
+        role = "fleeing" if kyzkuu.fleer(s["stage"]) == s["turn"] else "chasing"
+        pos = f"Stage {s['stage'] + 1}, player is {role}. Horses: {s['stats']}. Points: {s['points']}."
+        return llm.coach_generic(cfg, "kyzkuu", pos, tr("kk_hint"), lang)
+
+    def rewards(self, s, players, level, champ, mode):
+        """players: [(name, registered), (name, registered)]. Жеңімпазға ат бонусы."""
+        w = s.get("winner")
+        if w not in (0, 1):
+            return []
+        name, reg = players[w]
+        if not reg:
+            return []
+        if mode == "ai" and not champ and level not in ("hard", "master"):
+            return []
+        pct = 10 if w == 0 else 5
+        db.add_horse_bonus(name, pct)
+        return [tr("kk_bonus", p=pct)]
+
+    def anim_delay(self, s):
+        return 0.3
+
+
+SPECS = {"togyz": Togyz(), "asyk": Asyk(), "doyby": Doyby(), "jamby": Jamby(), "kyzkuu": Kyzkuu()}
