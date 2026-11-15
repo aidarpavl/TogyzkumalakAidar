@@ -6,6 +6,15 @@ import streamlit as st
 st.set_page_config(page_title="Ұлттық ойындар · Тоғызқұмалақ · Асық · Дойбы", page_icon="🟤", layout="wide",
                    initial_sidebar_state="collapsed")
 
+import core  # noqa: E402
+
+if getattr(core, "VERSION", None) != "2.0":
+    st.error("⚠️ GitHub-тағы `core/` бумасы ескі. `core/` ішіндегі БАРЛЫҚ файлдарды архивтегі жаңа нұсқамен "
+             "ауыстырыңыз: `__init__.py, asyk.py, db.py, draughts.py, engine.py, i18n.py, llm.py`.\n\n"
+             "⚠️ Папка `core/` на GitHub устарела. Замените ВСЕ файлы в `core/` новыми из архива: "
+             "`__init__.py, asyk.py, db.py, draughts.py, engine.py, i18n.py, llm.py`.")
+    st.stop()
+
 from core import db  # noqa: E402
 from ui.common import CSS, init_session, is_admin, is_registered, secret, ss, touch_presence, tr  # noqa: E402
 
