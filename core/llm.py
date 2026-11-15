@@ -103,3 +103,36 @@ def coach(cfg: dict, state: dict, player: int, analysis: list[tuple[int, int]], 
         "the best move and why, and one danger to watch for. Use the word 'отау' for pit and 'түздық/туздык' for tuzdyk."
     )
     return chat(cfg, prompt, system="You are a togyz kumalak coach.", max_tokens=500)
+
+
+# ---------------------------------------------------------------- Барлық ойындарға ортақ
+
+RULES_BY_GAME = {
+    "togyz": RULES_SHORT,
+    "doyby": ("Draughts (checkers). Captures are mandatory; men move diagonally forward and capture both ways; "
+              "kings move and capture any distance diagonally. Squares use a1..h8 (or a1..j10) notation; "
+              "':' marks a capture path, '-' a simple move."),
+    "asyk": ("Asyk atu (Kazakh knucklebones): asyks stand inside a ring; you shoot your heavy saqa from the "
+             "bottom line; asyks knocked out of the ring are yours; if you capture any, you shoot again."),
+}
+
+
+def choose_option(cfg: dict, game: str, position: str, options: list[str]) -> int | None:
+    lst = "\n".join(f"{i + 1}. {o}" for i, o in enumerate(options))
+    prompt = (RULES_BY_GAME[game] + "\n\nPosition:\n" + position + "\n\nLegal options:\n" + lst +
+              "\nThink briefly, then answer with the line `CHOICE: <number>`.")
+    txt = chat(cfg, prompt, system="You are a strong player of traditional Kazakh games.", max_tokens=300)
+    m = re.search(r"CHOICE\s*[:\-]?\s*(\d+)", txt, re.I) or re.search(r"(\d+)\D*$", txt)
+    if m:
+        k = int(m.group(1)) - 1
+        if 0 <= k < len(options):
+            return k
+    return None
+
+
+def coach_generic(cfg: dict, game: str, position: str, hints: str, lang: str) -> str:
+    lang_name = "Kazakh" if lang == "kz" else "Russian"
+    prompt = (RULES_BY_GAME[game] + "\n\nPosition:\n" + position + "\n\nEngine notes: " + hints +
+              f"\n\nAs a friendly coach, explain in {lang_name} in 4-6 short sentences the key idea, the best move "
+              "and why, and one danger to watch for.")
+    return chat(cfg, prompt, system="You are a coach of traditional Kazakh games.", max_tokens=500)

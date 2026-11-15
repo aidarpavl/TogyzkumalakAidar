@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: transparent; font-family: "Segoe UI", Roboto, system-ui, sans-serif; }
+  #wrap { max-width: 620px; margin: 0 auto; padding: 4px 2px 8px; user-select: none; }
+  .bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px;
+         border-radius: 12px; margin: 4px 0; color: #fff8ec; background: linear-gradient(90deg, #3d2412, #5c3518);
+         font-size: clamp(12px, 3.4vw, 16px); }
+  .bar.active { box-shadow: 0 0 0 2px #f5b041, 0 0 16px rgba(245,176,65,.5); }
+  .name { font-weight: 700; display: flex; gap: 6px; align-items: center; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .pc { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #0006; }
+  .pc.w { background: #f7ecd7; } .pc.b { background: #2b1a10; border-color: #fff8; }
+  .clock { font-variant-numeric: tabular-nums; background: #0004; padding: 2px 8px; border-radius: 8px; }
+  .board { position: relative; display: grid; border-radius: 10px; overflow: hidden; border: clamp(6px, 1.6vw, 12px) solid #5c3518;
+           box-shadow: 0 8px 22px #0006, inset 0 0 0 1px #0005; }
+  .sq { position: relative; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; }
+  .light { background: #f0d9b5; } .dark { background: #a0683a; }
+  body.green .light { background: #eeeed2; } body.green .dark { background: #6f9650; }
+  body.night .light { background: #9aa4b1; } body.night .dark { background: #3b4656; }
+  .sq.last { box-shadow: inset 0 0 0 100px rgba(245,176,65,.35); }
+  .sq.capd::after { content: ""; position: absolute; width: 30%; height: 30%; border-radius: 50%; background: rgba(231,76,60,.45); }
+  .sq.sel { box-shadow: inset 0 0 0 100px rgba(46,204,113,.45); }
+  .sq.can { cursor: pointer; }
+  .dot { position: absolute; width: 30%; height: 30%; border-radius: 50%; background: rgba(46,204,113,.85); box-shadow: 0 0 8px #2ecc71; pointer-events: none; }
+  .piece { width: 82%; height: 82%; border-radius: 50%; position: relative; transition: transform .15s;
+           box-shadow: 0 3px 4px #0008, inset 0 -3px 0 #0003; display: flex; align-items: center; justify-content: center; }
+  .piece.w { background: radial-gradient(circle at 35% 30%, #fffdf6, #efe0c2 55%, #cdb68e); }
+  .piece.b { background: radial-gradient(circle at 35% 30%, #6b4a33, #2b1a10 60%, #120a05); }
+  .piece::before { content: ""; position: absolute; inset: 16%; border-radius: 50%; border: 2px solid #0002; }
+  .piece.b::before { border-color: #fff2; }
+  .piece .crown { font-size: clamp(12px, 4vw, 26px); color: #d4a017; text-shadow: 0 1px 1px #000; z-index: 1; }
+  .piece.mov { transform: scale(1.06); }
+  .coord { position: absolute; font-size: clamp(7px, 1.8vw, 11px); opacity: .7; font-weight: 700; }
+  .coord.r { left: 2px; top: 1px; } .coord.f { right: 2px; bottom: 0; }
+  .light .coord { color: #a0683a; } .dark .coord { color: #f0d9b5; }
+  .msg { text-align: center; color: #fff8ec; font-weight: 600; font-size: clamp(12px, 3.4vw, 15px); padding: 6px 10px;
+         margin-top: 4px; border-radius: 10px; background: #7a4419; }
+  .msg:empty { display: none; }
+</style>
+</head>
+<body>
+<div id="wrap"></div>
+<script>
+(function () {
+  const send = (type, data) => window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, data), "*");
+  let args = null, sel = [], pending = false;
+  const setH = () => send("streamlit:setFrameHeight", { height: Math.ceil(document.getElementById("wrap").getBoundingClientRect().height + 8) });
+  const fmt = (s) => { if (s == null) return ""; s = Math.max(0, Math.floor(s)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+
+  function candidates() {
+    return (args.legal || []).filter(p => sel.every((x, i) => p[i] === x));
+  }
+
+  function click(idx) {
+    if (pending || !args.clickable) return;
+    const s = args.state, b = s.board;
+    const me = s.turn === 0 ? 1 : -1;
+    const own = Math.sign(b[idx]) === me && (args.legal || []).some(p => p[0] === idx);
+    if (own && (sel.length <= 1)) { sel = [idx]; render(); return; }
+    if (sel.length) {
+      const next = candidates().filter(p => p[sel.length] === idx);
+      if (next.length) {
+        sel = sel.concat([idx]);
+        const full = next.filter(p => p.length === sel.length);
+        if (next.length === 1 || full.length) {
+          const path = (full[0] || next[0]);
+          if (next.length === 1) sel = path.slice();
+          pending = true;
+          send("streamlit:setComponentValue", { value: { path: sel.slice(), nonce: Date.now() + Math.random() }, dataType: "json" });
+        }
+        render(); return;
+      }
+    }
+    sel = []; render();
+  }
+
+  function render() {
+    const a = args, s = a.state, n = s.n, b = s.board, flip = a.bottom === 1;
+    const lastPath = s.last ? s.last.path : [], lastCap = s.last ? s.last.cap : [];
+    const cand = sel.length ? candidates() : [];
+    const nextSq = new Set(cand.map(p => p[sel.length]).filter(x => x !== undefined));
+    const movable = new Set(a.clickable && !pending ? (a.legal || []).map(p => p[0]) : []);
+    let html = "";
+    for (let vr = 0; vr < n; vr++) {
+      for (let vc = 0; vc < n; vc++) {
+        const r = flip ? n - 1 - vr : vr, c = flip ? n - 1 - vc : vc, idx = r * n + c;
+        const dark = (r + c) % 2 === 1;
+        const cls = ["sq", dark ? "dark" : "light"];
+        if (lastPath.includes(idx)) cls.push("last");
+        if (lastCap.includes(idx) && b[idx] === 0) cls.push("capd");
+        if (sel.includes(idx)) cls.push("sel");
+        if (movable.has(idx) || nextSq.has(idx)) cls.push("can");
+        let inner = "";
+        const p = b[idx];
+        if (p) inner = `<div class="piece ${p > 0 ? "w" : "b"} ${sel[0] === idx ? "mov" : ""}">${Math.abs(p) === 2 ? '<span class="crown">♛</span>' : ""}</div>`;
+        if (nextSq.has(idx)) inner += '<div class="dot"></div>';
+        if (vc === 0) inner += `<span class="coord r">${n - r}</span>`;
+        if (vr === n - 1) inner += `<span class="coord f">${"abcdefghij"[c]}</span>`;
+        html += `<div class="${cls.join(" ")}" data-i="${idx}">${inner}</div>`;
+      }
+    }
+    const top = flip ? 0 : 1, bot = flip ? 1 : 0;
+    const cnt = a.counts || ["", ""];
+    const clk = (p) => a.clocks ? `<span class="clock">⏱ ${fmt(a.clocks[p])}</span>` : "";
+    const pc = (p) => `<span class="pc ${p === 0 ? "w" : "b"}"></span>`;
+    document.getElementById("wrap").innerHTML = `
+      <div class="bar ${s.turn === top && !s.over ? "active" : ""}"><span class="name">${pc(top)}${a.names[top]}</span>${clk(top)}<span>● ${cnt[top]}</span></div>
+      <div class="board" style="grid-template-columns: repeat(${n}, 1fr)">${html}</div>
+      <div class="bar ${s.turn === bot && !s.over ? "active" : ""}"><span class="name">${pc(bot)}${a.names[bot]}</span>${clk(bot)}<span>● ${cnt[bot]}</span></div>
+      <div class="msg">${a.message || ""}</div>`;
+    document.body.className = a.theme || "";
+    document.querySelectorAll(".sq").forEach(el => el.addEventListener("click", () => click(parseInt(el.dataset.i))));
+    setH();
+  }
+
+  window.addEventListener("message", (ev) => {
+    const d = ev.data;
+    if (!d || d.type !== "streamlit:render") return;
+    const changed = !args || JSON.stringify(d.args.state) !== JSON.stringify(args.state) || d.args.token !== args.token;
+    args = d.args;
+    if (changed) { pending = false; sel = []; }
+    render();
+  });
+  window.addEventListener("resize", () => args && setH());
+  send("streamlit:componentReady", { apiVersion: 1 });
+})();
+</script>
+</body>
+</html>

@@ -1,7 +1,8 @@
-"""Деректер қоймасы: SQLite (әдепкі) немесе PostgreSQL (DATABASE_URL берілсе).
+"""Деректер қоймасы: SQLite (әдепкі) немесе PostgreSQL / Supabase (DATABASE_URL берілсе).
 
-Streamlit Community Cloud-та файлдық жүйе қайта іске қосқанда тазаланады,
-сондықтан тұрақты рейтинг үшін Supabase/Neon сияқты тегін PostgreSQL ұсынылады.
+Кестелер: users, ratings (әр ойынға жеке Elo), games, rooms, chat, presence,
+wallet (әрекет / ұпай), payments (Kaspi төлемдері), withdrawals (шығару өтінімдері),
+champ_games (чемпионат ойындары), settings.
 """
 from __future__ import annotations
 
@@ -20,6 +21,19 @@ _URL = None
 _PG = False
 _INIT = False
 
+GAMES = ("togyz", "asyk", "doyby")
+
+# Чемпионат параметрлері (settings кестесі арқылы өзгертуге болады)
+DEFAULTS = {
+    "price": "500",           # бір төлем, ₸
+    "attempts_per_pay": "3",  # бір төлемге әрекет саны
+    "fund_share": "30",       # жүлде қорына, %
+    "min_withdraw": "1000",   # шығаруға қажетті ең аз ұпай
+    "kaspi_phone": "",
+    "kaspi_name": "",
+    "kaspi_qr": "",           # base64 PNG/JPEG
+}
+
 SCHEMA = [
     """CREATE TABLE IF NOT EXISTS users (
         username TEXT PRIMARY KEY,
@@ -34,6 +48,17 @@ SCHEMA = [
         draws INTEGER NOT NULL DEFAULT 0,
         created DOUBLE PRECISION NOT NULL,
         last_seen DOUBLE PRECISION NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS ratings (
+        username TEXT NOT NULL,
+        game TEXT NOT NULL,
+        rating INTEGER NOT NULL DEFAULT 1200,
+        peak INTEGER NOT NULL DEFAULT 1200,
+        games INTEGER NOT NULL DEFAULT 0,
+        wins INTEGER NOT NULL DEFAULT 0,
+        losses INTEGER NOT NULL DEFAULT 0,
+        draws INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (username, game)
     )""",
     """CREATE TABLE IF NOT EXISTS rooms (
         id TEXT PRIMARY KEY,
@@ -80,10 +105,67 @@ SCHEMA = [
         name TEXT PRIMARY KEY,
         ts DOUBLE PRECISION NOT NULL
     )""",
+    """CREATE TABLE IF NOT EXISTS wallet (
+        username TEXT PRIMARY KEY,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        points INTEGER NOT NULL DEFAULT 0,
+        earned INTEGER NOT NULL DEFAULT 0,
+        paid_total INTEGER NOT NULL DEFAULT 0,
+        champ_wins INTEGER NOT NULL DEFAULT 0,
+        champ_losses INTEGER NOT NULL DEFAULT 0
+    )""",
+    """CREATE TABLE IF NOT EXISTS payments (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        amount INTEGER NOT NULL,
+        attempts INTEGER NOT NULL,
+        receipt TEXT,
+        image TEXT,
+        status TEXT NOT NULL,
+        admin TEXT,
+        note TEXT,
+        created DOUBLE PRECISION NOT NULL,
+        decided DOUBLE PRECISION
+    )""",
+    """CREATE TABLE IF NOT EXISTS withdrawals (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        points INTEGER NOT NULL,
+        amount INTEGER NOT NULL,
+        phone TEXT NOT NULL,
+        status TEXT NOT NULL,
+        admin TEXT,
+        created DOUBLE PRECISION NOT NULL,
+        decided DOUBLE PRECISION
+    )""",
+    """CREATE TABLE IF NOT EXISTS champ_games (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        game TEXT NOT NULL,
+        level TEXT NOT NULL,
+        status TEXT NOT NULL,
+        result TEXT,
+        points INTEGER NOT NULL DEFAULT 0,
+        created DOUBLE PRECISION NOT NULL,
+        finished DOUBLE PRECISION
+    )""",
+    """CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    )""",
     "CREATE INDEX IF NOT EXISTS idx_games_white ON games(white)",
     "CREATE INDEX IF NOT EXISTS idx_games_black ON games(black)",
     "CREATE INDEX IF NOT EXISTS idx_chat_room ON chat(room)",
     "CREATE INDEX IF NOT EXISTS idx_rooms_status ON rooms(status)",
+    "CREATE INDEX IF NOT EXISTS idx_ratings_game ON ratings(game, rating)",
+    "CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status)",
+    "CREATE INDEX IF NOT EXISTS idx_withdrawals_status ON withdrawals(status)",
+]
+
+# Бұрынғы базаға қосылатын бағандар
+MIGRATIONS = [
+    ("games", "game", "TEXT NOT NULL DEFAULT 'togyz'"),
+    ("rooms", "game", "TEXT NOT NULL DEFAULT 'togyz'"),
 ]
 
 
@@ -129,6 +211,9 @@ def execute(q: str, params: tuple = (), fetch: str | None = None):
                 res = cur.rowcount
             con.commit()
             return res
+        except Exception:
+            con.rollback()
+            raise
         finally:
             con.close()
 
@@ -139,12 +224,41 @@ def init() -> None:
         return
     for q in SCHEMA:
         execute(q if _PG else q.replace("DOUBLE PRECISION", "REAL"))
+    for table, col, decl in MIGRATIONS:
+        try:
+            if _PG:
+                execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {decl}")
+            else:
+                cols = [r["name"] for r in execute(f"PRAGMA table_info({table})", fetch="all")]
+                if col not in cols:
+                    execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        except Exception:  # noqa: BLE001
+            pass
     _INIT = True
 
 
 def new_id(n: int = 6) -> str:
     alphabet = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(n))
+
+
+# ---------------------------------------------------------------- Settings
+
+def get_setting(key: str) -> str:
+    r = execute("SELECT value FROM settings WHERE key = ?", (key,), "one")
+    return r["value"] if r else DEFAULTS.get(key, "")
+
+
+def set_setting(key: str, value: str) -> None:
+    execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            (key, str(value)))
+
+
+def int_setting(key: str) -> int:
+    try:
+        return int(get_setting(key))
+    except ValueError:
+        return int(DEFAULTS[key])
 
 
 # ---------------------------------------------------------------- Users
@@ -183,19 +297,96 @@ def change_password(username: str, new_password: str) -> None:
             (_hash(new_password, salt), salt, username))
 
 
-def leaderboard(limit: int = 100) -> list[dict]:
+# ---------------------------------------------------------------- Ratings
+
+def get_rating(username: str, game: str) -> dict:
+    r = execute("SELECT * FROM ratings WHERE username = ? AND game = ?", (username, game), "one")
+    return r or {"username": username, "game": game, "rating": 1200, "peak": 1200, "games": 0,
+                 "wins": 0, "losses": 0, "draws": 0}
+
+
+def leaderboard(game: str, limit: int = 100) -> list[dict]:
     return execute(
-        "SELECT username, rating, peak, games, wins, losses, draws FROM users "
-        "WHERE games > 0 ORDER BY rating DESC, wins DESC LIMIT ?",
-        (limit,), "all")
+        "SELECT username, rating, peak, games, wins, losses, draws FROM ratings "
+        "WHERE game = ? AND games > 0 ORDER BY rating DESC, wins DESC LIMIT ?",
+        (game, limit), "all")
 
 
-def user_rank(username: str) -> int | None:
-    u = get_user(username)
-    if not u or not u["games"]:
+def user_rank(username: str, game: str) -> int | None:
+    r = get_rating(username, game)
+    if not r["games"]:
         return None
-    r = execute("SELECT COUNT(*) AS c FROM users WHERE games > 0 AND rating > ?", (u["rating"],), "one")
-    return r["c"] + 1
+    c = execute("SELECT COUNT(*) AS c FROM ratings WHERE game = ? AND games > 0 AND rating > ?",
+                (game, r["rating"]), "one")
+    return c["c"] + 1
+
+
+def _apply_result(username: str, game: str, delta: int, result: str) -> None:
+    col = {"win": "wins", "loss": "losses", "draw": "draws"}[result]
+    execute("INSERT INTO ratings (username, game) VALUES (?, ?) ON CONFLICT (username, game) DO NOTHING",
+            (username, game))
+    execute(
+        f"UPDATE ratings SET rating = rating + ?, games = games + 1, {col} = {col} + 1, "
+        f"peak = CASE WHEN rating + ? > peak THEN rating + ? ELSE peak END WHERE username = ? AND game = ?",
+        (delta, delta, delta, username, game))
+
+
+def elo(ra: int, rb: int, score_a: float, k: int = 32) -> tuple[int, int]:
+    ea = 1 / (1 + 10 ** ((rb - ra) / 400))
+    da = round(k * (score_a - ea))
+    return da, -da
+
+
+def record_game(game: str, mode: str, white: str, black: str, state: dict, score: list[int],
+                white_reg: bool, black_reg: bool, rated: bool, ai_elo: int | None = None) -> dict:
+    w = state["winner"]
+    result = "1-0" if w == 0 else "0-1" if w == 1 else "½-½"
+    sw = 1.0 if w == 0 else 0.0 if w == 1 else 0.5
+    rw = rb = None
+    dw = db_ = 0
+    uw = get_user(white) if white_reg else None
+    ub = get_user(black) if black_reg else None
+    if rated:
+        rw = get_rating(uw["username"], game)["rating"] if uw else (ai_elo or 1200)
+        rb = get_rating(ub["username"], game)["rating"] if ub else (ai_elo or 1200)
+        k = 32 if (uw and ub) else 20
+        dw, db_ = elo(rw, rb, sw, k)
+        res_w = "win" if sw == 1 else "loss" if sw == 0 else "draw"
+        res_b = "win" if sw == 0 else "loss" if sw == 1 else "draw"
+        if uw:
+            _apply_result(uw["username"], game, dw, res_w)
+        if ub:
+            _apply_result(ub["username"], game, db_, res_b)
+    execute(
+        "INSERT INTO games (id, game, mode, white, black, result, reason, score_w, score_b, moves, "
+        "rating_w, rating_b, delta_w, delta_b, created) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (new_id(10), game, mode, white, black, result, state.get("reason"), int(score[0]), int(score[1]),
+         " ".join(state.get("moves", [])), rw, rb, dw if (uw and rated) else None, db_ if (ub and rated) else None,
+         time.time()))
+    return {"delta_w": dw, "delta_b": db_}
+
+
+def user_games(username: str, game: str | None = None, limit: int = 50) -> list[dict]:
+    if game:
+        return execute("SELECT * FROM games WHERE game = ? AND (white = ? OR black = ?) "
+                       "ORDER BY created DESC LIMIT ?", (game, username, username, limit), "all")
+    return execute("SELECT * FROM games WHERE white = ? OR black = ? ORDER BY created DESC LIMIT ?",
+                   (username, username, limit), "all")
+
+
+def recent_games(game: str, limit: int = 20) -> list[dict]:
+    return execute("SELECT * FROM games WHERE game = ? AND mode = 'online' ORDER BY created DESC LIMIT ?",
+                   (game, limit), "all")
+
+
+def rating_history(username: str, game: str, limit: int = 200) -> list[int]:
+    rows = execute(
+        "SELECT white, black, rating_w, rating_b, delta_w, delta_b FROM games WHERE game = ? AND "
+        "((white = ? AND delta_w IS NOT NULL AND rating_w IS NOT NULL) OR "
+        "(black = ? AND delta_b IS NOT NULL AND rating_b IS NOT NULL)) "
+        "ORDER BY created ASC LIMIT ?", (game, username, username, limit), "all")
+    return [(r["rating_w"] + r["delta_w"]) if r["white"] == username else (r["rating_b"] + r["delta_b"])
+            for r in rows]
 
 
 # ---------------------------------------------------------------- Presence
@@ -210,79 +401,9 @@ def online_count(window: int = 300) -> int:
     return r["c"] if r else 0
 
 
-# ---------------------------------------------------------------- Elo
+# ---------------------------------------------------------------- Rooms
 
-def elo(ra: int, rb: int, score_a: float, k: int = 32) -> tuple[int, int]:
-    ea = 1 / (1 + 10 ** ((rb - ra) / 400))
-    da = round(k * (score_a - ea))
-    return da, -da
-
-
-def _apply_result(username: str, delta: int, result: str) -> None:
-    col = {"win": "wins", "loss": "losses", "draw": "draws"}[result]
-    execute(
-        f"UPDATE users SET rating = rating + ?, games = games + 1, {col} = {col} + 1, "
-        f"peak = CASE WHEN rating + ? > peak THEN rating + ? ELSE peak END WHERE username = ?",
-        (delta, delta, delta, username))
-
-
-def record_game(mode: str, white: str, black: str, state: dict,
-                white_reg: bool, black_reg: bool, rated: bool,
-                ai_elo: int | None = None) -> dict:
-    """Ойынды сақтап, рейтингті жаңарту. Қайтарады: {'delta_w', 'delta_b'}."""
-    w = state["winner"]
-    result = "1-0" if w == 0 else "0-1" if w == 1 else "½-½"
-    sw = 1.0 if w == 0 else 0.0 if w == 1 else 0.5
-    rw = rb = None
-    dw = db = 0
-    uw = get_user(white) if white_reg else None
-    ub = get_user(black) if black_reg else None
-    if rated:
-        rw = uw["rating"] if uw else (ai_elo or 1200)
-        rb = ub["rating"] if ub else (ai_elo or 1200)
-        k = 32 if (uw and ub) else 20
-        dw, db = elo(rw, rb, sw, k)
-        res_w = "win" if sw == 1 else "loss" if sw == 0 else "draw"
-        res_b = "win" if sw == 0 else "loss" if sw == 1 else "draw"
-        if uw:
-            _apply_result(uw["username"], dw, res_w)
-        if ub:
-            _apply_result(ub["username"], db, res_b)
-    execute(
-        "INSERT INTO games (id, mode, white, black, result, reason, score_w, score_b, moves, "
-        "rating_w, rating_b, delta_w, delta_b, created) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (new_id(10), mode, white, black, result, state.get("reason"), state["kazan"][0], state["kazan"][1],
-         " ".join(state["moves"]), rw, rb, dw if uw else None, db if ub else None, time.time()))
-    return {"delta_w": dw, "delta_b": db}
-
-
-def user_games(username: str, limit: int = 50) -> list[dict]:
-    return execute(
-        "SELECT * FROM games WHERE white = ? OR black = ? ORDER BY created DESC LIMIT ?",
-        (username, username, limit), "all")
-
-
-def recent_games(limit: int = 20) -> list[dict]:
-    return execute("SELECT * FROM games WHERE mode = 'online' ORDER BY created DESC LIMIT ?", (limit,), "all")
-
-
-def rating_history(username: str, limit: int = 200) -> list[int]:
-    rows = execute(
-        "SELECT white, black, rating_w, rating_b, delta_w, delta_b FROM games "
-        "WHERE (white = ? AND delta_w IS NOT NULL) OR (black = ? AND delta_b IS NOT NULL) "
-        "ORDER BY created ASC LIMIT ?", (username, username, limit), "all")
-    out = []
-    for r in rows:
-        if r["white"] == username:
-            out.append(r["rating_w"] + r["delta_w"])
-        else:
-            out.append(r["rating_b"] + r["delta_b"])
-    return out
-
-
-# ---------------------------------------------------------------- Rooms (онлайн)
-
-def create_room(host: str, host_guest: bool, color: str, state: dict, rated: bool,
+def create_room(game: str, host: str, host_guest: bool, color: str, state: dict, rated: bool,
                 private: bool, tc: int) -> str:
     rid = new_id()
     now = time.time()
@@ -290,9 +411,9 @@ def create_room(host: str, host_guest: bool, color: str, state: dict, rated: boo
         color = secrets.choice(["white", "black"])
     white, black = (host, None) if color == "white" else (None, host)
     execute(
-        "INSERT INTO rooms (id, white, black, white_guest, black_guest, state, status, rated, private, tc, "
-        "clock_w, clock_b, last_ts, created, updated) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (rid, white, black, int(host_guest and color == "white"), int(host_guest and color == "black"),
+        "INSERT INTO rooms (id, game, white, black, white_guest, black_guest, state, status, rated, private, tc, "
+        "clock_w, clock_b, last_ts, created, updated) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (rid, game, white, black, int(host_guest and color == "white"), int(host_guest and color == "black"),
          json.dumps(state), "waiting", int(rated and not host_guest), int(private), tc, tc, tc, 0, now, now))
     return rid
 
@@ -304,39 +425,31 @@ def get_room(rid: str) -> dict | None:
     return r
 
 
-def open_rooms() -> list[dict]:
-    rows = execute(
-        "SELECT * FROM rooms WHERE status = 'waiting' AND private = 0 AND updated > ? ORDER BY created DESC",
-        (time.time() - 1800,), "all")
-    return rows
-
-
-def active_rooms() -> list[dict]:
+def open_rooms(game: str) -> list[dict]:
     return execute(
-        "SELECT * FROM rooms WHERE status = 'active' AND updated > ? ORDER BY updated DESC LIMIT 30",
-        (time.time() - 1800,), "all")
+        "SELECT * FROM rooms WHERE game = ? AND status = 'waiting' AND private = 0 AND updated > ? "
+        "ORDER BY created DESC", (game, time.time() - 1800), "all")
+
+
+def active_rooms(game: str) -> list[dict]:
+    return execute(
+        "SELECT * FROM rooms WHERE game = ? AND status = 'active' AND updated > ? ORDER BY updated DESC LIMIT 30",
+        (game, time.time() - 1800), "all")
 
 
 def join_room(rid: str, name: str, guest: bool) -> bool:
     r = get_room(rid)
-    if not r or r["status"] != "waiting":
-        return False
-    if name in (r["white"], r["black"]):
+    if not r or r["status"] != "waiting" or name in (r["white"], r["black"]):
         return False
     now = time.time()
-    if r["white"] is None:
-        n = execute("UPDATE rooms SET white = ?, white_guest = ?, status = 'active', last_ts = ?, updated = ?, "
-                    "rated = rated * ? WHERE id = ? AND status = 'waiting'",
-                    (name, int(guest), now, now, int(not guest), r["id"]))
-    else:
-        n = execute("UPDATE rooms SET black = ?, black_guest = ?, status = 'active', last_ts = ?, updated = ?, "
-                    "rated = rated * ? WHERE id = ? AND status = 'waiting'",
-                    (name, int(guest), now, now, int(not guest), r["id"]))
+    side = "white" if r["white"] is None else "black"
+    n = execute(f"UPDATE rooms SET {side} = ?, {side}_guest = ?, status = 'active', last_ts = ?, updated = ?, "
+                f"rated = rated * ? WHERE id = ? AND status = 'waiting'",
+                (name, int(guest), now, now, int(not guest), r["id"]))
     return bool(n)
 
 
 def save_room_state(room: dict, state: dict, clock_w: float, clock_b: float) -> bool:
-    """Оптимистік құлыптау: version сәйкес келсе ғана сақтайды."""
     now = time.time()
     status = "finished" if state["over"] else room["status"]
     n = execute(
@@ -346,15 +459,19 @@ def save_room_state(room: dict, state: dict, clock_w: float, clock_b: float) -> 
     return bool(n)
 
 
+def patch_room_state(rid: str, state: dict) -> None:
+    execute("UPDATE rooms SET state = ? WHERE id = ?", (json.dumps(state), rid))
+
+
 def cancel_room(rid: str) -> None:
     execute("UPDATE rooms SET status = 'cancelled', updated = ? WHERE id = ? AND status = 'waiting'",
             (time.time(), rid))
 
 
-def user_active_rooms(name: str) -> list[dict]:
+def user_active_rooms(name: str, game: str) -> list[dict]:
     return execute(
-        "SELECT * FROM rooms WHERE (white = ? OR black = ?) AND status IN ('waiting', 'active') "
-        "ORDER BY updated DESC", (name, name), "all")
+        "SELECT * FROM rooms WHERE game = ? AND (white = ? OR black = ?) AND status IN ('waiting', 'active') "
+        "ORDER BY updated DESC", (game, name, name), "all")
 
 
 # ---------------------------------------------------------------- Chat
@@ -369,3 +486,172 @@ def add_chat(room: str, author: str, body: str) -> None:
 def get_chat(room: str, limit: int = 40) -> list[dict]:
     rows = execute("SELECT * FROM chat WHERE room = ? ORDER BY ts DESC LIMIT ?", (room, limit), "all")
     return list(reversed(rows))
+
+
+# ---------------------------------------------------------------- Wallet / чемпионат
+
+def _ensure_wallet(username: str) -> None:
+    execute("INSERT INTO wallet (username) VALUES (?) ON CONFLICT (username) DO NOTHING", (username,))
+
+
+def get_wallet(username: str) -> dict:
+    _ensure_wallet(username)
+    return execute("SELECT * FROM wallet WHERE username = ?", (username,), "one")
+
+
+def add_attempts(username: str, n: int) -> None:
+    _ensure_wallet(username)
+    execute("UPDATE wallet SET attempts = attempts + ? WHERE username = ?", (n, username))
+
+
+def start_champ(username: str, game: str, level: str) -> str | None:
+    """Әрекетті «кепілге» алады. Жеңсе немесе тең түссе — қайтарылады, жеңілсе немесе тастап кетсе — жанады."""
+    _ensure_wallet(username)
+    # Аяқталмаған ойындар — жеңіліс
+    for g in execute("SELECT id FROM champ_games WHERE username = ? AND status = 'active'", (username,), "all"):
+        finish_champ(g["id"], "loss", 0)
+    n = execute("UPDATE wallet SET attempts = attempts - 1 WHERE username = ? AND attempts >= 1", (username,))
+    if not n:
+        return None
+    cid = new_id(10)
+    execute("INSERT INTO champ_games (id, username, game, level, status, created) VALUES (?,?,?,?,?,?)",
+            (cid, username, game, level, "active", time.time()))
+    return cid
+
+
+def finish_champ(cid: str, result: str, points: int) -> bool:
+    row = execute("SELECT * FROM champ_games WHERE id = ?", (cid,), "one")
+    if not row:
+        return False
+    n = execute("UPDATE champ_games SET status = 'done', result = ?, points = ?, finished = ? "
+                "WHERE id = ? AND status = 'active'", (result, points if result == "win" else 0, time.time(), cid))
+    if not n:
+        return False
+    u = row["username"]
+    if result == "win":
+        execute("UPDATE wallet SET attempts = attempts + 1, points = points + ?, earned = earned + ?, "
+                "champ_wins = champ_wins + 1 WHERE username = ?", (points, points, u))
+    elif result == "draw":
+        execute("UPDATE wallet SET attempts = attempts + 1 WHERE username = ?", (u,))
+    else:
+        execute("UPDATE wallet SET champ_losses = champ_losses + 1 WHERE username = ?", (u,))
+    return True
+
+
+def champ_leaderboard(limit: int = 100) -> list[dict]:
+    return execute("SELECT * FROM wallet WHERE earned > 0 OR champ_losses > 0 "
+                   "ORDER BY earned DESC, champ_wins DESC LIMIT ?", (limit,), "all")
+
+
+def champ_history(username: str, limit: int = 30) -> list[dict]:
+    return execute("SELECT * FROM champ_games WHERE username = ? ORDER BY created DESC LIMIT ?",
+                   (username, limit), "all")
+
+
+# ---------------------------------------------------------------- Payments
+
+def create_payment(username: str, receipt: str, image_b64: str | None) -> str:
+    pid = new_id(10)
+    execute("INSERT INTO payments (id, username, amount, attempts, receipt, image, status, created) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (pid, username, int_setting("price"), int_setting("attempts_per_pay"), receipt.strip()[:100],
+             image_b64, "pending", time.time()))
+    return pid
+
+
+def payments(status: str | None = None, username: str | None = None, limit: int = 100) -> list[dict]:
+    q = "SELECT * FROM payments WHERE 1=1"
+    p: list = []
+    if status:
+        q += " AND status = ?"
+        p.append(status)
+    if username:
+        q += " AND username = ?"
+        p.append(username)
+    q += " ORDER BY created DESC LIMIT ?"
+    p.append(limit)
+    return execute(q, tuple(p), "all")
+
+
+def receipt_used(receipt: str) -> bool:
+    r = execute("SELECT COUNT(*) AS c FROM payments WHERE receipt = ? AND status <> 'rejected'",
+                (receipt.strip(),), "one")
+    return bool(r and r["c"])
+
+
+def decide_payment(pid: str, approve: bool, admin: str, note: str = "") -> bool:
+    row = execute("SELECT * FROM payments WHERE id = ?", (pid,), "one")
+    if not row:
+        return False
+    n = execute("UPDATE payments SET status = ?, admin = ?, note = ?, decided = ? WHERE id = ? AND status = 'pending'",
+                ("approved" if approve else "rejected", admin, note, time.time(), pid))
+    if n and approve:
+        _ensure_wallet(row["username"])
+        execute("UPDATE wallet SET attempts = attempts + ?, paid_total = paid_total + ? WHERE username = ?",
+                (row["attempts"], row["amount"], row["username"]))
+    return bool(n)
+
+
+# ---------------------------------------------------------------- Fund / withdrawals
+
+def fund_stats() -> dict:
+    paid = execute("SELECT COALESCE(SUM(amount), 0) AS s FROM payments WHERE status = 'approved'", (), "one")["s"]
+    out = execute("SELECT COALESCE(SUM(amount), 0) AS s FROM withdrawals WHERE status = 'paid'", (), "one")["s"]
+    reserved = execute("SELECT COALESCE(SUM(amount), 0) AS s FROM withdrawals WHERE status = 'pending'",
+                       (), "one")["s"]
+    pts = execute("SELECT COALESCE(SUM(points), 0) AS s FROM wallet", (), "one")["s"]
+    fund = int(paid) * int_setting("fund_share") // 100
+    return {"paid": int(paid), "fund": fund, "paid_out": int(out), "reserved": int(reserved),
+            "available": max(0, fund - int(out) - int(reserved)), "points_total": int(pts)}
+
+
+def withdrawal_quote(username: str) -> int:
+    """Ойыншының ұпай үлесіне сәйкес жүлде қорынан сома (₸)."""
+    w = get_wallet(username)
+    st = fund_stats()
+    if w["points"] <= 0 or st["points_total"] <= 0:
+        return 0
+    return st["available"] * w["points"] // st["points_total"]
+
+
+def request_withdrawal(username: str, phone: str) -> tuple[bool, str]:
+    w = get_wallet(username)
+    if w["points"] < int_setting("min_withdraw"):
+        return False, "min"
+    if execute("SELECT id FROM withdrawals WHERE username = ? AND status = 'pending'", (username,), "one"):
+        return False, "pending"
+    amount = withdrawal_quote(username)
+    if amount < 1:
+        return False, "fund"
+    pts = w["points"]
+    n = execute("UPDATE wallet SET points = points - ? WHERE username = ? AND points = ?", (pts, username, pts))
+    if not n:
+        return False, "retry"
+    execute("INSERT INTO withdrawals (id, username, points, amount, phone, status, created) VALUES (?,?,?,?,?,?,?)",
+            (new_id(10), username, pts, amount, phone, "pending", time.time()))
+    return True, str(amount)
+
+
+def withdrawals(status: str | None = None, username: str | None = None, limit: int = 100) -> list[dict]:
+    q = "SELECT * FROM withdrawals WHERE 1=1"
+    p: list = []
+    if status:
+        q += " AND status = ?"
+        p.append(status)
+    if username:
+        q += " AND username = ?"
+        p.append(username)
+    q += " ORDER BY created DESC LIMIT ?"
+    p.append(limit)
+    return execute(q, tuple(p), "all")
+
+
+def decide_withdrawal(wid: str, paid: bool, admin: str) -> bool:
+    row = execute("SELECT * FROM withdrawals WHERE id = ?", (wid,), "one")
+    if not row:
+        return False
+    n = execute("UPDATE withdrawals SET status = ?, admin = ?, decided = ? WHERE id = ? AND status = 'pending'",
+                ("paid" if paid else "rejected", admin, time.time(), wid))
+    if n and not paid:
+        execute("UPDATE wallet SET points = points + ? WHERE username = ?", (row["points"], row["username"]))
+    return bool(n)
