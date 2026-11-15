@@ -112,6 +112,8 @@ RULES_BY_GAME = {
     "doyby": ("Draughts (checkers). Captures are mandatory; men move diagonally forward and capture both ways; "
               "kings move and capture any distance diagonally. Squares use a1..h8 (or a1..j10) notation; "
               "':' marks a capture path, '-' a simple move."),
+    "jamby": ("Zhamby atu: horseback archery. The archer gallops past a target; the bow bobs with the horse's gait; "
+              "wind drifts arrows sideways. You choose the release moment; the aim is then set automatically."),
     "asyk": ("Asyk atu (Kazakh knucklebones): asyks stand inside a ring; you shoot your heavy saqa from the "
              "bottom line; asyks knocked out of the ring are yours; if you capture any, you shoot again."),
 }

@@ -3,16 +3,16 @@ from __future__ import annotations
 
 import streamlit as st
 
-st.set_page_config(page_title="Ұлттық ойындар · Тоғызқұмалақ · Асық · Дойбы", page_icon="🟤", layout="wide",
+st.set_page_config(page_title="Ұлттық ойындар · Тоғызқұмалақ · Асық · Дойбы · Жамбы", page_icon="🟤", layout="wide",
                    initial_sidebar_state="collapsed")
 
 import core  # noqa: E402
 
-if getattr(core, "VERSION", None) != "2.0":
+if getattr(core, "VERSION", None) != "2.1":
     st.error("⚠️ GitHub-тағы `core/` бумасы ескі. `core/` ішіндегі БАРЛЫҚ файлдарды архивтегі жаңа нұсқамен "
-             "ауыстырыңыз: `__init__.py, asyk.py, db.py, draughts.py, engine.py, i18n.py, llm.py`.\n\n"
+             "ауыстырыңыз: `__init__.py, asyk.py, db.py, draughts.py, engine.py, i18n.py, jamby.py, llm.py`.\n\n"
              "⚠️ Папка `core/` на GitHub устарела. Замените ВСЕ файлы в `core/` новыми из архива: "
-             "`__init__.py, asyk.py, db.py, draughts.py, engine.py, i18n.py, llm.py`.")
+             "`__init__.py, asyk.py, db.py, draughts.py, engine.py, i18n.py, jamby.py, llm.py`.")
     st.stop()
 
 from core import db  # noqa: E402
@@ -88,11 +88,11 @@ if qp_room:
         ss["_goto"] = gk
     st.query_params.clear()
 
-PAGES = ["home", "togyz", "asyk", "doyby", "champ", "rating", "profile", "settings"]
+PAGES = ["home", "togyz", "asyk", "doyby", "jamby", "champ", "rating", "profile", "settings"]
 if is_admin():
     PAGES.append("admin")
 LABELS = {"home": tr("nav_home"), "togyz": "⚫ " + tr("game_togyz"), "asyk": "🦴 " + tr("game_asyk"),
-          "doyby": "♛ " + tr("game_doyby"), "champ": tr("nav_champ"), "rating": tr("nav_rating"),
+          "doyby": "♛ " + tr("game_doyby"), "jamby": "🏹 " + tr("game_jamby"), "champ": tr("nav_champ"), "rating": tr("nav_rating"),
           "profile": tr("nav_profile"), "settings": tr("nav_settings"), "admin": tr("nav_admin")}
 
 goto = ss.pop("_goto", None)
@@ -121,7 +121,7 @@ elif page == "admin":
 
 st.divider()
 fc1, fc2 = st.columns([4, 1])
-fc1.caption("Ұлттық ойындар · Тоғызқұмалақ · Асық ату · Дойбы · 2026")
+fc1.caption("Ұлттық ойындар · Тоғызқұмалақ · Асық ату · Дойбы · Жамбы ату · 2026")
 if fc2.button(tr("logout"), use_container_width=True):
     for g in list(ss.games.values()):
         abandon(g)

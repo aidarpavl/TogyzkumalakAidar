@@ -7,14 +7,15 @@ from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import asyk, draughts, engine, llm
-from core.i18n import RULES, RULES_ASYK, RULES_DOYBY
+from core import asyk, draughts, engine, jamby, llm
+from core.i18n import RULES, RULES_ASYK, RULES_DOYBY, RULES_JAMBY
 from ui.common import ss, take, tick, tr
 
 _ROOT = Path(__file__).resolve().parent.parent / "components"
 _togyz = components.declare_component("togyz_board", path=str(_ROOT / "board"))
 _draughts = components.declare_component("draughts_board", path=str(_ROOT / "draughts"))
 _asyk = components.declare_component("asyk_field", path=str(_ROOT / "asyk"))
+_jamby = components.declare_component("jamby_field", path=str(_ROOT / "jamby"))
 
 
 class Spec:
@@ -263,4 +264,76 @@ class Asyk(Spec):
         return s.get("moves", [])
 
 
-SPECS = {"togyz": Togyz(), "asyk": Asyk(), "doyby": Doyby()}
+# ---------------------------------------------------------------- Жамбы ату
+
+class Jamby(Spec):
+    key = "jamby"
+    icon = "🏹"
+
+    def rules(self, lang):
+        return RULES_JAMBY[lang]
+
+    def new_state(self, opts=None):
+        return jamby.new_state()
+
+    def apply(self, s, mv):
+        shot = {"ax": float(mv["ax"]), "ay": float(mv["ay"]), "t": float(mv["t"])}
+        if not all(math.isfinite(v) for v in shot.values()):
+            raise ValueError("bad shot")
+        return jamby.play(s, shot)
+
+    def ai(self, s, level):
+        return jamby.best_shot(s, level)
+
+    def llm_move(self, cfg, s):
+        cur = s["cur"]
+        cands = [cur["T"] * i / 8 for i in range(1, 8)]
+        opts = []
+        for t in cands:
+            bx, by = jamby.bob(cur, t)
+            opts.append(f"release at t={t:.2f}s: bow sway {math.hypot(bx, by):.2f}, target x {jamby.target_x(cur, t):+.2f}")
+        k = llm.choose_option(cfg, "jamby", jamby.describe(s, s["turn"]), opts)
+        if k is None:
+            return None
+        shot = jamby.best_shot(s, "hard")
+        t = cands[k]
+        bx, by = jamby.bob(cur, t)
+        kk = cur["dist"] / 30
+        return {"ax": jamby.target_x(cur, t) - bx - cur["wind"] * kk, "ay": -by - 0.02 * kk, "t": t} if shot else None
+
+    def render(self, s, bottom, names, clickable, key, message="", clocks=None, clock_running=False, room=""):
+        val = _jamby(state=s, bottom=bottom, names=names, clickable=clickable, message=message,
+                     hint=tr("jamby_hint"), labels={"end": tr("jamby_end"), "wind": tr("jamby_wind"),
+                                                    "miss": tr("jamby_miss")},
+                     clocks=clocks, room=room, token=tick(), key=key, default=None)
+        v = take(val, key)
+        if v and clickable:
+            return {k: v[k] for k in ("ax", "ay", "t")}
+        return None
+
+    def score(self, s):
+        return jamby.totals(s)
+
+    def status(self, s, names):
+        parts = []
+        lm = s.get("last")
+        if lm:
+            pts = "X" if lm["x"] else (str(lm["pts"]) if lm["pts"] else tr("jamby_miss"))
+            parts.append(tr("jamby_last", name=names[lm["shooter"]], pts=pts))
+        if s.get("cur"):
+            parts.append(tr("jamby_status", d=s["cur"]["dist"], w=f"{s['cur']['wind']:+.2f}"))
+        return " · ".join(parts) or tr("jamby_ride")
+
+    def hint(self, s):
+        cur = s["cur"]
+        a = cur["wind"] * cur["dist"] / 30
+        return tr("jamby_tip", w=cur["wind"], side=tr("left_side") if a > 0 else tr("right_side"), a=abs(a))
+
+    def coach(self, cfg, s, lang):
+        return llm.coach_generic(cfg, "jamby", jamby.describe(s, s["turn"]), self.hint(s), lang)
+
+    def anim_delay(self, s):
+        return 1.9
+
+
+SPECS = {"togyz": Togyz(), "asyk": Asyk(), "doyby": Doyby(), "jamby": Jamby()}

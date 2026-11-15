@@ -21,7 +21,7 @@ _URL = None
 _PG = False
 _INIT = False
 
-GAMES = ("togyz", "asyk", "doyby")
+GAMES = ("togyz", "asyk", "doyby", "jamby")
 
 # Чемпионат параметрлері (settings кестесі арқылы өзгертуге болады)
 DEFAULTS = {

@@ -16,7 +16,7 @@ from ui.play import abandon, start_ai
 from ui.specs import SPECS
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
-GAME_KEYS = ["togyz", "asyk", "doyby"]
+GAME_KEYS = ["togyz", "asyk", "doyby", "jamby"]
 NAME_RE = re.compile(r"^[A-Za-zА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі0-9_]{3,20}$")
 PHONE_RE = re.compile(r"^\+?[78]\d{10}$")
 
@@ -33,8 +33,8 @@ def home_page(public: bool = False):
     c1.image(str(ASSETS / "togyz.png"), use_container_width=True)
     c2.image(str(ASSETS / "asyk.png"), use_container_width=True)
     st.markdown("<div class='ornament'></div>", unsafe_allow_html=True)
-    cols = st.columns(3)
-    icons = {"togyz": "⚫⚪", "asyk": "🦴", "doyby": "♛"}
+    cols = st.columns(4)
+    icons = {"togyz": "⚫⚪", "asyk": "🦴", "doyby": "♛", "jamby": "🏹🐎"}
     for col, gk in zip(cols, GAME_KEYS):
         with col:
             st.markdown(f"<div class='gamecard gc-{gk}'><div class='ico'>{icons[gk]}</div>"
@@ -156,7 +156,7 @@ def profile_page():
         st.info(tr("profile_guest"))
         return
     st.markdown(f"### 👤 {esc(ss.user)}")
-    cols = st.columns(3)
+    cols = st.columns(4)
     for col, gk in zip(cols, GAME_KEYS):
         r = db.get_rating(ss.user, gk)
         rank = db.user_rank(ss.user, gk)
@@ -336,6 +336,9 @@ def champ_page():
             name, phone = db.get_setting("kaspi_name"), db.get_setting("kaspi_phone")
             if name or phone:
                 st.markdown(tr("kaspi_to", name=esc(name), phone=esc(phone)))
+            if phone:
+                st.markdown(tr("kaspi_transfer"))
+                st.code(phone, language=None)
         with c2:
             st.markdown(tr("pay_steps", p=price))
             with st.form("pay_form", clear_on_submit=True):
