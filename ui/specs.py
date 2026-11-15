@@ -7,8 +7,8 @@ from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import asyk, db, draughts, engine, jamby, kyzkuu, llm
-from core.i18n import RULES, RULES_ASYK, RULES_DOYBY, RULES_JAMBY, RULES_KYZKUU
+from core import asyk, db, draughts, engine, jamby, kyzkuu, llm, tenge
+from core.i18n import RULES, RULES_ASYK, RULES_DOYBY, RULES_JAMBY, RULES_KYZKUU, RULES_TENGE
 from ui.common import ss, take, tick, tr
 
 _ROOT = Path(__file__).resolve().parent.parent / "components"
@@ -17,6 +17,7 @@ _draughts = components.declare_component("draughts_board", path=str(_ROOT / "dra
 _asyk = components.declare_component("asyk_field", path=str(_ROOT / "asyk"))
 _jamby = components.declare_component("jamby_field", path=str(_ROOT / "jamby"))
 _kyzkuu = components.declare_component("kyzkuu_field", path=str(_ROOT / "kyzkuu"))
+_tenge = components.declare_component("tenge_field", path=str(_ROOT / "tenge"))
 
 
 class Spec:
@@ -352,13 +353,13 @@ class Jamby(Spec):
 
 # ---------------------------------------------------------------- Қыз қуу
 
-def _horse_stats(name: str | None, registered: bool) -> dict:
+def _horse_stats(name: str | None, registered: bool, mod=kyzkuu) -> dict:
     if name and registered:
         try:
-            return kyzkuu.stats_from_mult(db.get_horse(name))
+            return mod.stats_from_mult(db.get_horse(name))
         except Exception:  # noqa: BLE001
             pass
-    return dict(kyzkuu.BASE)
+    return dict(mod.BASE)
 
 
 class Kyzkuu(Spec):
@@ -477,11 +478,105 @@ class Kyzkuu(Spec):
         if mode == "ai" and not champ and level not in ("hard", "master"):
             return []
         pct = 10 if w == 0 else 5
-        db.add_horse_bonus(name, pct)
+        db.boost_horse(name, kyzkuu.STATS, pct)
         return [tr("kk_bonus", p=pct)]
 
     def anim_delay(self, s):
         return 0.3
 
 
-SPECS = {"togyz": Togyz(), "asyk": Asyk(), "doyby": Doyby(), "jamby": Jamby(), "kyzkuu": Kyzkuu()}
+# ---------------------------------------------------------------- Теңге алу
+
+class Tenge(Spec):
+    key = "tenge"
+    icon = "🪙"
+
+    def rules(self, lang):
+        return RULES_TENGE[lang]
+
+    def new_state(self, opts=None):
+        return tenge.new_state(opts)
+
+    def after_start(self, g):
+        s = g["state"]
+        if g["mode"] == "ai":
+            h, a = g["human"], 1 - g["human"]
+            s["stats"][h] = _horse_stats(g["names"][h], not ss.guest, tenge)
+            lvl = g["level"] if g["level"] in tenge.AI_SIGMA else "medium"
+            s["stats"][a] = tenge.ai_stats(lvl)
+            s["ai_plan"] = tenge.ai_attempts(s["stats"][a], s["layout"], lvl)
+        else:
+            for p in (0, 1):
+                s["stats"][p] = _horse_stats(g["names"][p], g["names"][p] == ss.user and not ss.guest, tenge)
+        s["ready"] = True
+
+    def on_active(self, room):
+        s = room["state"]
+        if s.get("ready") or room["status"] != "active":
+            return None
+        s["stats"] = [_horse_stats(room["white"], not room["white_guest"], tenge),
+                      _horse_stats(room["black"], not room["black_guest"], tenge)]
+        s["ready"] = True
+        return s
+
+    def apply(self, s, mv):
+        return tenge.play(s, {"attempts": list(mv.get("attempts", []))})
+
+    def ai(self, s, level):
+        plan = s.get("ai_plan")
+        if plan is None:
+            plan = tenge.ai_attempts(s["stats"][s["turn"]], s["layout"], level if level in tenge.AI_SIGMA else "medium")
+        return {"attempts": plan}
+
+    def llm_move(self, cfg, s):
+        styles = list(tenge.AI_SIGMA)
+        opts = [f"timing error ±{tenge.AI_SIGMA[k][0]} s, wrong-side chance {tenge.AI_SIGMA[k][1]:.0%}" for k in styles]
+        k = llm.choose_option(cfg, "tenge", tenge.describe(s, s["turn"]), opts)
+        if k is None:
+            return None
+        return {"attempts": tenge.ai_attempts(s["stats"][s["turn"]], s["layout"], styles[k])}
+
+    def render(self, s, bottom, names, clickable, key, message="", clocks=None, clock_running=False, room=""):
+        view = {k: v for k, v in s.items() if k != "ai_plan"}
+        val = _tenge(state=view, me=bottom, names=names, clickable=clickable, message=message,
+                     labels={"side": tr("kk_side"), "front": tr("kk_front"), "rear": tr("kk_rear"),
+                             "speed": tr("kk_speed"), "stamina": tr("kk_stamina"), "taken": tr("tg_taken"),
+                             "time": tr("tg_time"), "next": tr("tg_next"), "start": tr("kk_start"),
+                             "left": tr("tg_left"), "right": tr("tg_right"), "kmh": tr("kmh")},
+                     room=room, token=tick(), key=key, default=None)
+        v = take(val, key)
+        if v and clickable:
+            return {"attempts": v.get("attempts", [])}
+        return None
+
+    def score(self, s):
+        return tenge.score(s)
+
+    def status(self, s, names):
+        parts = [tr("tg_status", name=names[p], n=r["taken"], t=f"{r['time']:.2f}")
+                 for p, r in enumerate(s["rides"]) if r]
+        if not s["over"]:
+            parts.append(tr("tg_your_ride"))
+        return " · ".join(parts)
+
+    def hint(self, s):
+        return tr("tg_hint")
+
+    def coach(self, cfg, s, lang):
+        return llm.coach_generic(cfg, "tenge", tenge.describe(s, s["turn"]), tr("tg_hint"), lang)
+
+    def rewards(self, s, players, level, champ, mode):
+        w = s.get("winner")
+        if w not in (0, 1):
+            return []
+        name, reg = players[w]
+        if not reg or (mode == "ai" and not champ and level not in ("hard", "master")):
+            return []
+        db.boost_horse(name, tenge.STATS, 5)
+        return [tr("kk_bonus", p=5)]
+
+    def anim_delay(self, s):
+        return 0.3
+
+
+SPECS = {"togyz": Togyz(), "asyk": Asyk(), "doyby": Doyby(), "jamby": Jamby(), "kyzkuu": Kyzkuu(), "tenge": Tenge()}

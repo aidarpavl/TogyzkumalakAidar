@@ -16,7 +16,7 @@ from ui.play import abandon, start_ai
 from ui.specs import SPECS
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
-GAME_KEYS = ["togyz", "asyk", "doyby", "jamby", "kyzkuu"]
+GAME_KEYS = ["togyz", "asyk", "doyby", "jamby", "kyzkuu", "tenge"]
 NAME_RE = re.compile(r"^[A-Za-zА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі0-9_]{3,20}$")
 PHONE_RE = re.compile(r"^\+?[78]\d{10}$")
 
@@ -33,7 +33,7 @@ def home_page(public: bool = False):
     c1.image(str(ASSETS / "togyz.png"), use_container_width=True)
     c2.image(str(ASSETS / "asyk.png"), use_container_width=True)
     st.markdown("<div class='ornament'></div>", unsafe_allow_html=True)
-    icons = {"togyz": "⚫⚪", "asyk": "🦴", "doyby": "♛", "jamby": "🏹🐎", "kyzkuu": "👧🐎🤠"}
+    icons = {"togyz": "⚫⚪", "asyk": "🦴", "doyby": "♛", "jamby": "🏹🐎", "kyzkuu": "👧🐎🤠", "tenge": "🐎🪙"}
     rows = [GAME_KEYS[:3], GAME_KEYS[3:]]
     for row in rows:
         cols = st.columns(3)
@@ -158,12 +158,13 @@ def profile_page():
         st.info(tr("profile_guest"))
         return
     st.markdown(f"### 👤 {esc(ss.user)}")
-    cols = st.columns(len(GAME_KEYS))
-    for col, gk in zip(cols, GAME_KEYS):
-        r = db.get_rating(ss.user, gk)
-        rank = db.user_rank(ss.user, gk)
-        col.metric(tr(f"game_{gk}"), r["rating"], help=f"{tr('col_games')}: {r['games']}")
-        col.caption(f"{tr('place')}: {'#' + str(rank) if rank else '—'} · {r['wins']}/{r['losses']}/{r['draws']}")
+    for row in (GAME_KEYS[:3], GAME_KEYS[3:]):
+        cols = st.columns(3)
+        for col, gk in zip(cols, row):
+            r = db.get_rating(ss.user, gk)
+            rank = db.user_rank(ss.user, gk)
+            col.metric(tr(f"game_{gk}"), r["rating"], help=f"{tr('col_games')}: {r['games']}")
+            col.caption(f"{tr('place')}: {'#' + str(rank) if rank else '—'} · {r['wins']}/{r['losses']}/{r['draws']}")
     w = db.get_wallet(ss.user)
     st.markdown(f"<div class='wallet'><div>{tr('attempts')}<span>{w['attempts']}</span></div>"
                 f"<div>{tr('points')}<span>{w['points']}</span></div>"
@@ -295,6 +296,9 @@ def champ_page():
                 f"<div>🤝 {tr('your_share')}<span>{quote:,} ₸</span></div></div>".replace(",", " "),
                 unsafe_allow_html=True)
     st.write("")
+    if ss.get("_pay_done"):
+        st.success(ss.pop("_pay_done"))
+        st.balloons()
     t_play, t_pay, t_out, t_lb = st.tabs([tr("champ_play"), tr("pay_title"), tr("withdraw_title"), tr("champ_lb")])
 
     with t_play:
@@ -343,7 +347,9 @@ def champ_page():
                 st.code(phone, language=None)
         with c2:
             st.markdown(tr("pay_steps", p=price))
+            st.info(tr("pay_code_hint"))
             with st.form("pay_form", clear_on_submit=True):
+                code = st.text_input(tr("pay_code"), max_chars=4, placeholder="1")
                 receipt = st.text_input(tr("receipt"))
                 up = st.file_uploader(tr("upload_check"), type=["png", "jpg", "jpeg", "webp"])
                 if st.form_submit_button(tr("send_pay"), type="primary", use_container_width=True):
@@ -353,7 +359,10 @@ def champ_page():
                     elif receipt.strip() and db.receipt_used(receipt):
                         st.error(tr("pay_dup"))
                     else:
-                        db.create_payment(ss.user, receipt, img)
+                        db.create_payment(ss.user, receipt, img, code=code)
+                        if code.strip() == "1":
+                            ss["_pay_done"] = tr("pay_auto", a=att)
+                            st.rerun()
                         st.success(tr("pay_sent"))
             mine = [p for p in db.payments(username=ss.user, limit=40) if (p.get("kind") or "attempts") == "attempts"]
             if mine:
@@ -433,6 +442,18 @@ def admin_page():
                 if b.button(tr("reject"), key=f"rj_{p['id']}"):
                     db.decide_payment(p["id"], False, ss.user)
                     st.rerun()
+        autos = [p for p in db.payments("approved", limit=80) if p.get("admin") == "auto"]
+        if autos:
+            st.markdown(f"**{tr('adm_auto_upg')}**")
+            for p in autos[:30]:
+                a, b = st.columns([4, 1], vertical_alignment="center")
+                kind = p.get("kind") or "attempts"
+                what = (f"🎟 {p['attempts']}" if kind == "attempts" else f"🐎 {tr('upg_' + kind[4:])} ×{p.get('qty') or 1}")
+                a.markdown(f"{dt.datetime.fromtimestamp(p['created']).strftime('%d.%m %H:%M')} · **{esc(p['username'])}** · "
+                           f"{what} · {p['amount']} ₸ · 🧾 `{esc(p['receipt'] or '—')}`")
+                if b.button(tr("revoke"), key=f"rv_{p['id']}"):
+                    db.revoke_payment(p["id"], ss.user)
+                    st.rerun()
         done = db.payments(limit=50)
         if done:
             st.dataframe([{tr("date"): dt.datetime.fromtimestamp(p["created"]).strftime("%d.%m %H:%M"),
@@ -447,6 +468,8 @@ def admin_page():
         for x in pend:
             with st.container(border=True):
                 st.markdown(f"**{esc(x['username'])}** · {x['points']} 🏅 → **{x['amount']} ₸** · 📱 `{esc(x['phone'])}`")
+                ps = db.payment_summary(x["username"])
+                st.caption(tr("adm_paycheck", a=ps["approved"], au=ps["auto"], m=ps["manual"], r=ps["revoked"]))
                 a, b = st.columns(2)
                 if a.button(tr("mark_paid"), key=f"wp_{x['id']}", type="primary"):
                     db.decide_withdrawal(x["id"], True, ss.user)
@@ -505,31 +528,32 @@ def admin_page():
 
 # ---------------------------------------------------------------- Қыз қуу: атты жетілдіру
 
-def upgrade_page():
-    from core import kyzkuu  # noqa: WPS433
+def upgrade_page(game: str = "kyzkuu"):
+    from core import kyzkuu, tenge  # noqa: WPS433
 
-    st.markdown(f"### {tr('upg_title')}")
+    mod = tenge if game == "tenge" else kyzkuu
+    bonus_col = "t_bonus" if game == "tenge" else "bonus"
+    st.markdown(f"### {tr('upg_title')} · {tr('game_' + game)}")
     if not is_registered():
         st.info(tr("upg_need_reg"))
         return
     h = db.get_horse(ss.user)
-    stats = kyzkuu.stats_from_mult(h)
-    units = {"burst": tr("kmh"), "speed": tr("kmh"), "stamina": "", "reverse": tr("kmh")}
-    cols = st.columns(4)
-    for col, k in zip(cols, kyzkuu.STATS):
-        pct = (h[k] - 1) * 100
-        col.metric(tr(f"upg_{k}"), f"{stats[k]:.1f} {units[k]}".strip(), f"+{pct:.1f}%" if pct > 0.05 else None)
-    st.caption(tr("upg_rules"))
-    if h["bonus"] > 0:
-        with st.container(border=True):
-            st.markdown(tr("upg_bonus", p=h["bonus"]))
-            stat = st.radio(tr("upg_which"), list(kyzkuu.STATS), horizontal=True, key="bonus_stat",
-                            format_func=lambda k: tr(f"upg_{k}"))
-            if st.button(tr("upg_apply"), type="primary"):
-                n = db.apply_horse_bonus(ss.user, stat)
-                if n:
-                    st.success(tr("upg_applied", p=n))
-                    st.rerun()
+    stats = mod.stats_from_mult(h)
+    units = {"burst": tr("kmh"), "speed": tr("kmh"), "stamina": "", "reverse": tr("kmh"),
+             "t_speed": tr("kmh"), "t_stamina": "", "t_accuracy": "×"}
+    cols = st.columns(len(mod.STATS))
+    for col, k in zip(cols, mod.STATS):
+        pct = ((h.get(k) or 1) - 1) * 100
+        val = f"×{stats[k]:.3f}" if k == "t_accuracy" else f"{stats[k]:.1f} {units[k]}".strip()
+        col.metric(tr(f"upg_{k}"), val, f"+{pct:.1f}%" if pct > 0.05 else None)
+    st.caption(tr("upg_rules_t") if game == "tenge" else tr("upg_rules"))
+    if (h.get(bonus_col) or 0) > 0:  # бұрынғы жиналған бонус — автоматты түрде барлық көрсеткішке
+        db.boost_horse(ss.user, mod.STATS, h[bonus_col])
+        db.execute(f"UPDATE horses SET {bonus_col} = 0 WHERE username = ?", (ss.user,))
+        st.rerun()
+    if ss.get("_upg_done"):
+        st.success(ss.pop("_upg_done"))
+        st.balloons()
     price = db.int_setting("upgrade_price")
     st.markdown(f"#### 💳 {tr('upg_buy')} · {tr('upg_each', p=price)}")
     c1, c2 = st.columns([1, 1.2])
@@ -544,8 +568,8 @@ def upgrade_page():
             st.markdown(tr("kaspi_transfer") + (f" ({esc(name)})" if name else ""))
             st.code(phone, language=None)
     with c2:
-        with st.form("upg_form", clear_on_submit=True):
-            stat = st.selectbox(tr("upg_which"), list(kyzkuu.STATS), format_func=lambda k: tr(f"upg_{k}"))
+        with st.form(f"upg_form_{game}", clear_on_submit=True):
+            stat = st.selectbox(tr("upg_which"), list(mod.STATS), format_func=lambda k: tr(f"upg_{k}"))
             qty = st.number_input(tr("upg_qty"), 1, 50, 1)
             st.markdown(tr("upg_total", a=price * int(qty), s=tr(f"upg_{stat}"), q=int(qty)))
             receipt = st.text_input(tr("receipt"))
@@ -558,8 +582,10 @@ def upgrade_page():
                     st.error(tr("pay_dup"))
                 else:
                     db.create_payment(ss.user, receipt, img, kind=f"upg_{stat}", qty=int(qty))
-                    st.success(tr("upg_sent"))
-        mine = [p for p in db.payments(username=ss.user, limit=40) if (p.get("kind") or "").startswith("upg_")]
+                    ss["_upg_done"] = tr("upg_sent", s=tr(f"upg_{stat}"), p=round((1.05 ** int(qty) - 1) * 100, 1))
+                    st.rerun()
+        mine = [p for p in db.payments(username=ss.user, limit=40)
+                if (p.get("kind") or "").startswith("upg_") and (p["kind"][4:] in mod.STATS)]
         if mine:
             st.markdown(f"**{tr('my_payments')}**")
             st.dataframe([{tr("date"): dt.datetime.fromtimestamp(p["created"]).strftime("%d.%m %H:%M"),

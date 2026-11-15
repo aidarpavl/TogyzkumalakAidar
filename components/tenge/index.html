@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: transparent; font-family: "Segoe UI", Roboto, system-ui, sans-serif; }
+  #wrap { max-width: 1100px; margin: 0 auto; padding: 4px 2px 8px; user-select: none; }
+  .bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 12px; margin: 4px 0;
+         color: #fff8ec; background: linear-gradient(90deg, #3d2412, #5c3518); font-size: clamp(12px, 3.3vw, 15px); flex-wrap: wrap; }
+  .pl { font-weight: 700; display: flex; gap: 6px; align-items: center; }
+  .res { font-weight: 800; color: #f5b041; }
+  .views { display: grid; grid-template-columns: 2fr 1.2fr 1.2fr; gap: 6px; align-items: start; }
+  .view { position: relative; }
+  .view span { position: absolute; left: 8px; top: 6px; color: #fff; font-size: 12px; font-weight: 700; background: #0006; padding: 1px 7px; border-radius: 8px; }
+  canvas { width: 100%; display: block; border-radius: 12px; box-shadow: 0 4px 14px #0005; touch-action: manipulation; }
+  @media (max-width: 700px) { .views { grid-template-columns: 1fr 1fr; } .view.side { grid-column: 1 / 3; } }
+  .hud { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 6px; }
+  .hud div { background: #3d2412; color: #fff8ec; border-radius: 10px; padding: 5px 8px; font-size: 12px; }
+  .hud b { display: block; font-size: 18px; color: #f5b041; }
+  .meter { height: 8px; border-radius: 5px; background: #0005; overflow: hidden; margin-top: 3px; }
+  .meter i { display: block; height: 100%; background: linear-gradient(90deg, #e74c3c, #f1c40f, #2ecc71); }
+  @media (max-width: 700px) { .hud { grid-template-columns: repeat(3, 1fr); } }
+  .ctrl { display: flex; gap: 8px; margin-top: 8px; }
+  button { flex: 1; border: 0; border-radius: 14px; padding: 18px 10px; font-size: clamp(16px, 4.6vw, 22px); font-weight: 800; color: #fff; cursor: pointer;
+           background: linear-gradient(135deg, #b5452d, #e0a458); box-shadow: 0 4px 0 #7a1f1f; touch-action: manipulation; }
+  button:active { transform: translateY(3px); box-shadow: 0 1px 0 #7a1f1f; }
+  button.go { background: linear-gradient(135deg, #1e8449, #58d68d); box-shadow: 0 4px 0 #145a32; }
+  .msg { text-align: center; color: #fff8ec; font-weight: 600; font-size: clamp(12px, 3.4vw, 15px); padding: 6px 10px; margin-top: 6px; border-radius: 10px; background: #7a4419; }
+  .msg:empty { display: none; }
+  .big { position: absolute; inset: 0; display: flex; align-items: flex-start; padding-top: 34px; justify-content: center; font-size: 34px; font-weight: 900; color: #fff;
+         text-shadow: 0 2px 8px #000; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div class="bar" id="bar"></div>
+  <div class="views">
+    <div class="view side"><canvas id="cs" width="600" height="300"></canvas><span id="ls"></span><div class="big" id="big"></div></div>
+    <div class="view"><canvas id="cf" width="360" height="300"></canvas><span id="lf"></span></div>
+    <div class="view"><canvas id="cr" width="360" height="300"></canvas><span id="lr"></span></div>
+  </div>
+  <div class="hud" id="hud"></div>
+  <div class="ctrl" id="ctrl"></div>
+  <div class="msg" id="msg"></div>
+</div>
+<script>
+(function () {
+  // ---- core/tenge.py формулаларымен бірдей
+  const TRACK = 150.0, PENALTY = 2.0, COST = 15.0, REGEN = 5.0, LOW = 25.0, WINDOW = 2.5, MAX_ATTEMPTS = 25;
+  function ride(st, layout, attempts) {
+    const v = st.t_speed / 3.6, smax = st.t_stamina, win = WINDOW * st.t_accuracy, T = TRACK / v;
+    const taken = layout.map(() => false); let s = smax, last = 0.0, pen = 0.0; const log = [];
+    for (const [t, side] of attempts) {
+      s = Math.min(smax, s + REGEN * (t - last)); last = t;
+      const x = v * t, eff = win * (s < LOW ? 0.5 : 1.0);
+      s = Math.max(0.0, s - COST);
+      let hit = -1;
+      for (let i = 0; i < layout.length; i++) { const [p, sd] = layout[i]; if (!taken[i] && sd === side && Math.abs(x - p) <= eff) { hit = i; break; } }
+      if (hit < 0) pen += PENALTY; else taken[hit] = true;
+      log.push([t, side, hit]);
+    }
+    return { taken: taken.filter(Boolean).length, time: T + pen, pen, T, log, stam: s, takenArr: taken };
+  }
+
+  const send = (type, data) => window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, data), "*");
+  const $ = (id) => document.getElementById(id);
+  const cs = $("cs").getContext("2d"), cf = $("cf").getContext("2d"), cr = $("cr").getContext("2d");
+  const LEAN = { v: 0, x: 0 };
+  let args = null, first = true, seen = null, mode = "idle", run = null, replay = null, pending = false, justRode = false;
+  const L = () => args.labels || {};
+  const setH = () => send("streamlit:setFrameHeight", { height: Math.ceil($("wrap").getBoundingClientRect().height + 8) });
+  const roleOf = (p) => (p === 0 ? "jigit" : "jigit2");
+
+  const COL = {
+    girl: { horse: ["#fbf6ec", "#e2d8c4", "#bfb39b"], mane: "#ece6da", hoof: "#5b4a3a", blaze: null,
+            robe: "#a8142a", robe2: "#6e0c1b", dress: "#fbf7ef", trim: "#e3b23c", hat: "#a8142a", fur: "#f6f1e7",
+            tokym: "#1f6f8b", skin: "#f1c9a3", hair: "#1b1110" },
+    jigit: { horse: ["#a0612f", "#7a4621", "#4e2b13"], mane: "#1c0f07", hoof: "#2a1a10", blaze: "#f3ece0",
+             robe: "#1d4e6e", robe2: "#123449", dress: "#f2efe8", trim: "#e3b23c", hat: "#7a1b26", fur: "#3b2a1c",
+             tokym: "#8e1b2c", skin: "#d8a578", hair: "#140c08" },
+    jigit2: { horse: ["#d4d4d0", "#a8a8a3", "#7a7a75"], mane: "#2f2f2f", hoof: "#2a2a2a", blaze: null,
+              robe: "#2e6b3a", robe2: "#1d4a27", dress: "#f2efe8", trim: "#e3b23c", hat: "#5b1a6b", fur: "#4a3826",
+              tokym: "#c0751b", skin: "#d8a578", hair: "#140c08" }
+  };
+
+  function steppe(c, w, h, scroll, bob, horizon) {
+    const g = c.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, "#5aa6e6"); g.addColorStop(horizon / h, "#d6ecf7"); g.addColorStop(horizon / h + .001, "#c8b762"); g.addColorStop(1, "#7f8a34");
+    c.fillStyle = g; c.fillRect(0, 0, w, h);
+    c.fillStyle = "#8193ab";
+    c.beginPath(); c.moveTo(0, horizon + bob * .3);
+    for (let x = 0; x <= w; x += 30) c.lineTo(x, horizon + bob * .3 - 26 * Math.abs(Math.sin((x + scroll * .15) / 70)) - 8);
+    c.lineTo(w, horizon + 2); c.lineTo(0, horizon + 2); c.fill();
+  }
+
+  function leg2(c, hx, hy, a1, a2, l1, l2, w, color, hoof) {
+    const kx = hx + Math.sin(a1) * l1, ky = hy + Math.cos(a1) * l1;
+    const fx = kx + Math.sin(a1 + a2) * l2, fy = ky + Math.cos(a1 + a2) * l2;
+    c.strokeStyle = color; c.lineCap = "round"; c.lineJoin = "round";
+    c.lineWidth = w; c.beginPath(); c.moveTo(hx, hy); c.lineTo(kx, ky); c.stroke();
+    c.lineWidth = w * 0.6; c.beginPath(); c.moveTo(kx, ky); c.lineTo(fx, fy); c.stroke();
+    c.fillStyle = hoof; c.beginPath(); c.ellipse(fx, fy + 1, w * 0.42, w * 0.3, a1 + a2, 0, 7); c.fill();
+  }
+
+  function riderSide(c, role, g) {
+    const k = COL[role], bounce = Math.sin(g * 2) * 1.2;
+    c.save(); c.translate(2, -19 + bounce); if (LEAN.v) c.rotate(LEAN.v * 0.95);
+    // желбіреген етек / шапан
+    c.fillStyle = role === "girl" ? k.dress : k.robe2;
+    c.beginPath(); c.moveTo(-4, -4);
+    c.bezierCurveTo(-14, -2, -22, 4 + Math.sin(g * 1.7) * 3, -31, 10 + Math.sin(g * 1.5) * 4);
+    c.lineTo(-19, 14); c.bezierCurveTo(-11, 11, -4, 9, 3, 6); c.closePath(); c.fill();
+    c.strokeStyle = "rgba(90,40,30,.35)"; c.lineWidth = 0.8; c.stroke();
+    if (role === "girl") { c.strokeStyle = k.trim; c.lineWidth = 1; c.beginPath(); c.moveTo(-31, 10 + Math.sin(g * 1.5) * 4); c.lineTo(-19, 14); c.stroke(); }
+    // аяқ: сан, балтыр, етік, үзеңгі
+    c.strokeStyle = role === "girl" ? k.robe : k.robe; c.lineCap = "round"; c.lineWidth = 6;
+    c.beginPath(); c.moveTo(0, -2); c.lineTo(9, 6); c.stroke();
+    c.strokeStyle = "#1a1210"; c.lineWidth = 4.4; c.beginPath(); c.moveTo(9, 6); c.lineTo(6.5, 17); c.stroke();
+    c.fillStyle = "#1a1210"; c.beginPath(); c.ellipse(8.5, 18, 4.2, 2, 0.1, 0, 7); c.fill();
+    c.strokeStyle = k.trim; c.lineWidth = 0.9; c.beginPath(); c.moveTo(6, 7); c.lineTo(7, 19); c.moveTo(4.5, 19.5); c.lineTo(11, 19.5); c.stroke();
+    // дене (алға еңкейген)
+    c.save(); c.rotate(0.35);
+    c.fillStyle = role === "girl" ? k.dress : k.robe;
+    c.beginPath(); c.moveTo(-5.5, 0); c.lineTo(6, 0); c.lineTo(5, -23); c.quadraticCurveTo(0, -27.5, -5, -23.5); c.closePath(); c.fill();
+    c.strokeStyle = "rgba(90,40,30,.3)"; c.lineWidth = 0.7; c.stroke();
+    if (role === "girl") {
+      c.fillStyle = k.robe; c.beginPath(); c.moveTo(-5, -1.5); c.lineTo(5.2, -1.5); c.lineTo(4.4, -22.5); c.lineTo(-4.4, -23); c.closePath(); c.fill();
+      c.strokeStyle = k.trim; c.lineWidth = 1.1; c.beginPath(); c.moveTo(4.8, -1.5); c.lineTo(4.2, -22.5); c.moveTo(-5, -1.5); c.lineTo(5.2, -1.5); c.stroke();
+      c.fillStyle = k.trim; for (let i = 0; i < 4; i++) { c.beginPath(); c.arc(3.1, -6 - i * 4.6, 0.85, 0, 7); c.fill(); }
+    } else {
+      c.fillStyle = k.trim; c.fillRect(-5.8, -6.5, 12, 2.6);
+      c.fillStyle = "#c0392b"; c.fillRect(0, -6.5, 2.2, 2.6);
+      c.strokeStyle = "rgba(255,255,255,.22)"; c.lineWidth = 1; c.beginPath(); c.moveTo(4.2, -4); c.lineTo(3.2, -22); c.stroke();
+      c.fillStyle = k.dress; c.beginPath(); c.moveTo(1, -23); c.lineTo(4, -23); c.lineTo(2.5, -19); c.fill();
+    }
+    // тізгін ұстаған қол
+    c.strokeStyle = role === "girl" ? k.dress : k.robe; c.lineWidth = 3.6;
+    c.beginPath(); c.moveTo(2, -21); c.quadraticCurveTo(10, -14, 16, -12); c.stroke();
+    if (role === "girl") { c.strokeStyle = k.robe; c.lineWidth = 1.2; c.beginPath(); c.moveTo(14, -13.5); c.lineTo(15.5, -11); c.stroke(); }
+    c.fillStyle = k.skin; c.beginPath(); c.arc(17, -12, 1.9, 0, 7); c.fill();
+    // бас
+    c.fillStyle = k.skin; c.beginPath(); c.ellipse(1, -30, 4.5, 5.3, 0, 0, 7); c.fill();
+    c.beginPath(); c.moveTo(5, -31.5); c.lineTo(6.8, -29.2); c.lineTo(5, -28.3); c.fill();
+    c.fillStyle = "#111"; c.beginPath(); c.arc(3.1, -31, 0.7, 0, 7); c.fill();
+    if (role === "girl") {
+      c.strokeStyle = k.hair; c.lineWidth = 2.3;
+      for (let b = 0; b < 2; b++) {
+        const ey = -14 + b * 3 + Math.sin(g * 1.3 + b) * 4;
+        c.beginPath(); c.moveTo(-3, -29); c.bezierCurveTo(-10, -24 + b * 2, -16, -20 + Math.sin(g * 1.6 + b) * 3, -23, ey); c.stroke();
+        c.fillStyle = k.trim; c.beginPath(); c.arc(-23.5, ey + 0.5, 1.4, 0, 7); c.fill();
+      }
+      c.fillStyle = k.hair; c.beginPath(); c.ellipse(-0.5, -32, 4.8, 3.4, 0, Math.PI, 0); c.fill();
+      c.fillStyle = k.fur; c.beginPath(); c.ellipse(0, -34.6, 5.7, 1.9, 0, 0, 7); c.fill();
+      c.fillStyle = k.hat; c.beginPath(); c.moveTo(-4.6, -35.2); c.quadraticCurveTo(-4, -42.5, 0.5, -42.8); c.quadraticCurveTo(4.8, -42.3, 4.4, -35.2); c.fill();
+      c.fillStyle = k.trim; c.fillRect(-0.6, -44, 1.3, 1.5);
+      c.strokeStyle = "#f7f3ea"; c.lineCap = "round";
+      for (let f = 0; f < 3; f++) { c.lineWidth = 1.7 - f * 0.3; c.beginPath(); c.moveTo(0, -43.5); c.quadraticCurveTo(-3 - f * 2, -50 - f, -8 - f * 3 + Math.sin(g + f) * 1.5, -47 - f * 2); c.stroke(); }
+      c.fillStyle = k.trim; c.beginPath(); c.arc(-0.6, -26.8, 0.9, 0, 7); c.fill();
+    } else {
+      c.strokeStyle = k.hair; c.lineWidth = 0.9; c.beginPath(); c.moveTo(3.4, -28.2); c.quadraticCurveTo(5, -27.4, 6.2, -28.6); c.stroke();
+      c.fillStyle = k.fur; c.beginPath(); c.ellipse(0, -34.4, 6.3, 3, 0, 0, 7); c.fill();
+      c.beginPath(); c.moveTo(-5.8, -34); c.quadraticCurveTo(-9.5, -30, -8, -25.5); c.lineTo(-4.5, -30); c.fill();
+      c.fillStyle = k.hat; c.beginPath(); c.moveTo(-4.6, -36); c.quadraticCurveTo(-3, -43.2, 1, -43.6); c.quadraticCurveTo(5, -43.2, 4.6, -36); c.fill();
+      c.fillStyle = k.trim; c.beginPath(); c.arc(0.6, -43.6, 1.4, 0, 7); c.fill();
+      if (!LEAN.v) {
+      const wa = Math.sin(g * 2) * 0.6;
+      c.strokeStyle = k.robe; c.lineWidth = 3.4; c.beginPath(); c.moveTo(-1, -21); c.lineTo(-6, -31); c.stroke();
+      c.fillStyle = k.skin; c.beginPath(); c.arc(-6.4, -32, 1.8, 0, 7); c.fill();
+      c.strokeStyle = "#4a2a12"; c.lineWidth = 1.3; c.beginPath(); c.moveTo(-6.4, -32); c.lineTo(-10 + wa * 3, -42); c.stroke();
+      c.lineWidth = 0.8; c.beginPath(); c.moveTo(-10 + wa * 3, -42); c.quadraticCurveTo(-18, -44 + wa * 6, -22, -36 + wa * 8); c.stroke();
+      }
+    }
+    c.restore(); c.restore();
+  }
+
+  function horseSide(c, x, y, s, role, phase, dir) {
+    const k = COL[role], g = phase;
+    c.save(); c.translate(x, y); c.scale(s * dir, s);
+    // жер көлеңкесі
+    c.fillStyle = "rgba(0,0,0,.18)"; c.beginPath(); c.ellipse(0, 33, 42, 4, 0, 0, 7); c.fill();
+    const legs = (far) => {
+      const col = far ? k.horse[2] : k.horse[1], o = far ? 0 : 0.9;
+      const hp = g + o, fp = g + 2.2 + o;
+      leg2(c, -27 + (far ? 3 : 0), -1, 0.1 + 0.55 * Math.sin(hp), 0.35 + 0.5 * Math.max(0, Math.sin(hp + 1.4)), 15, 17, 7.5, col, k.hoof);
+      leg2(c, 24 - (far ? 3 : 0), 1, 0.05 + 0.62 * Math.sin(fp), -(0.15 + 1.0 * Math.max(0, Math.sin(fp + 1.6))), 14, 17, 6.6, col, k.hoof);
+    };
+    legs(true);
+    // құйрық
+    c.strokeStyle = k.mane; c.lineCap = "round";
+    for (let i = 0; i < 5; i++) { c.lineWidth = 3.4 - i * 0.5; c.beginPath(); c.moveTo(-37, -9);
+      c.bezierCurveTo(-50, -12 + Math.sin(g + i) * 3, -60, -2 + Math.sin(g * 1.3 + i) * 5, -67 - i * 2, 6 + i * 3 + Math.sin(g + i * 0.7) * 5); c.stroke(); }
+    // дене
+    const grd = c.createLinearGradient(0, -24, 0, 14); grd.addColorStop(0, k.horse[0]); grd.addColorStop(1, k.horse[1]);
+    c.fillStyle = grd; c.beginPath();
+    c.moveTo(-36, -10);
+    c.bezierCurveTo(-30, -18, -12, -15, 4, -15);
+    c.bezierCurveTo(14, -15, 20, -20, 24, -24);
+    c.bezierCurveTo(30, -36, 36, -46, 44, -52);
+    c.bezierCurveTo(48, -55, 52, -53, 54, -50);
+    c.bezierCurveTo(58, -44, 63, -38, 64.5, -34);
+    c.bezierCurveTo(65.5, -30, 61, -28, 57, -29);
+    c.bezierCurveTo(52, -31, 48, -34, 44, -36);
+    c.bezierCurveTo(40, -28, 36, -14, 34, -4);
+    c.bezierCurveTo(33, 6, 26, 10, 18, 10);
+    c.bezierCurveTo(6, 14, -14, 14, -24, 10);
+    c.bezierCurveTo(-34, 8, -42, 2, -40, -6);
+    c.closePath(); c.fill();
+    c.strokeStyle = "rgba(60,40,20,.28)"; c.lineWidth = 0.9; c.stroke();
+    c.strokeStyle = "rgba(0,0,0,.13)"; c.lineWidth = 1.2;
+    c.beginPath(); c.moveTo(-31, -4); c.quadraticCurveTo(-24, 4, -15, 6); c.stroke();
+    c.beginPath(); c.moveTo(22, -6); c.quadraticCurveTo(27, 2, 22, 8); c.stroke();
+    if (k.blaze) { c.fillStyle = k.blaze; c.beginPath(); c.moveTo(55, -49); c.quadraticCurveTo(61, -40, 63.5, -33); c.lineTo(61.5, -32); c.quadraticCurveTo(58, -40, 54, -48); c.fill(); }
+    c.fillStyle = k.horse[1]; c.beginPath(); c.moveTo(47, -53); c.lineTo(45, -62); c.lineTo(51, -54); c.fill();
+    c.fillStyle = "#111"; c.beginPath(); c.arc(54, -45, 1.6, 0, 7); c.fill(); c.beginPath(); c.arc(62.5, -32, 1, 0, 7); c.fill();
+    // жал
+    c.fillStyle = k.mane; c.beginPath(); c.moveTo(47, -55);
+    for (let i = 0; i <= 7; i++) { const t = i / 7; c.lineTo(46 - t * 24 - 6 - Math.sin(g + i) * 3, -55 + t * 34 + (i % 2) * 3); }
+    c.lineTo(24, -22); c.bezierCurveTo(30, -34, 38, -46, 47, -55); c.fill();
+    // жүген
+    c.strokeStyle = "#5a1a12"; c.lineWidth = 1.6; c.beginPath(); c.moveTo(51.5, -51); c.lineTo(58.5, -31); c.moveTo(48, -41); c.lineTo(63, -36); c.stroke();
+    c.fillStyle = k.trim; [[52, -48], [55, -40], [58, -33], [53, -39.5]].forEach(([a, b]) => { c.beginPath(); c.arc(a, b, 1.15, 0, 7); c.fill(); });
+    legs(false);
+    // тоқым мен ер
+    c.fillStyle = k.tokym; c.beginPath(); c.moveTo(-12, -15); c.lineTo(16, -15); c.lineTo(14, 3); c.lineTo(-10, 3); c.closePath(); c.fill();
+    c.strokeStyle = k.trim; c.lineWidth = 1.3; c.stroke();
+    c.beginPath(); c.moveTo(-8, -1); for (let i = 1; i < 7; i++) c.lineTo(-8 + i * 3.4, -1 - (i % 2) * 3); c.stroke();
+    c.fillStyle = "#5a2d0c"; c.beginPath(); c.moveTo(-8, -15); c.quadraticCurveTo(2, -12, 12, -16); c.lineTo(14, -22); c.quadraticCurveTo(2, -17, -10, -21); c.closePath(); c.fill();
+    c.fillStyle = k.trim; c.beginPath(); c.arc(13.5, -21.5, 1.3, 0, 7); c.fill();
+    riderSide(c, role, g);
+    // тізгін
+    c.strokeStyle = "#3a1a0a"; c.lineWidth = 0.9; c.beginPath(); c.moveTo(22, -25 + Math.sin(g * 2) * 1.2); c.quadraticCurveTo(40, -24, 58, -31); c.stroke();
+    c.restore();
+  }
+
+  function riderFront(c, role, g, back) {
+    const k = COL[role], bounce = Math.sin(g * 2) * 1.2;
+    c.save(); c.translate(0, bounce); if (LEAN.x) { c.translate(LEAN.x * 7, 4 * Math.abs(LEAN.x)); c.rotate(LEAN.x * 0.8); }
+    // етіктер (екі жақта)
+    c.strokeStyle = role === "girl" ? k.robe : k.robe; c.lineCap = "round"; c.lineWidth = 5.5;
+    c.beginPath(); c.moveTo(-9, -2); c.lineTo(-17, 6); c.moveTo(9, -2); c.lineTo(17, 6); c.stroke();
+    c.strokeStyle = "#1a1210"; c.lineWidth = 4.2; c.beginPath(); c.moveTo(-17, 6); c.lineTo(-18, 17); c.moveTo(17, 6); c.lineTo(18, 17); c.stroke();
+    // дене
+    c.fillStyle = role === "girl" ? k.dress : k.robe;
+    c.beginPath(); c.moveTo(-12, 0); c.lineTo(12, 0); c.lineTo(10, -30); c.quadraticCurveTo(0, -35, -10, -30); c.closePath(); c.fill();
+    if (role === "girl") {
+      c.fillStyle = k.robe; c.beginPath(); c.moveTo(-11, -1); c.lineTo(-3, -1); c.lineTo(-2.5, -29); c.lineTo(-9.5, -29.5); c.closePath(); c.fill();
+      c.beginPath(); c.moveTo(11, -1); c.lineTo(3, -1); c.lineTo(2.5, -29); c.lineTo(9.5, -29.5); c.closePath(); c.fill();
+      c.strokeStyle = k.trim; c.lineWidth = 1.1; c.beginPath(); c.moveTo(-3, -1); c.lineTo(-2.5, -29); c.moveTo(3, -1); c.lineTo(2.5, -29); c.stroke();
+      if (!back) { c.fillStyle = k.trim; for (let i = 0; i < 4; i++) { c.beginPath(); c.arc(-4.5, -6 - i * 6, 0.9, 0, 7); c.arc(4.5, -6 - i * 6, 0.9, 0, 7); c.fill(); } }
+    } else {
+      c.fillStyle = k.trim; c.fillRect(-12, -8, 24, 3);
+      if (!back) { c.fillStyle = k.dress; c.beginPath(); c.moveTo(-3, -31); c.lineTo(3, -31); c.lineTo(0, -24); c.fill();
+        c.strokeStyle = "rgba(255,255,255,.25)"; c.lineWidth = 1; c.beginPath(); c.moveTo(0, -24); c.lineTo(0, -8); c.stroke(); }
+      else { c.strokeStyle = "rgba(0,0,0,.18)"; c.lineWidth = 1; c.beginPath(); c.moveTo(0, -30); c.lineTo(0, -8); c.stroke(); }
+    }
+    // қолдар
+    c.strokeStyle = role === "girl" ? k.dress : k.robe; c.lineWidth = 4;
+    c.beginPath(); c.moveTo(-10, -26); c.quadraticCurveTo(-13, -14, -5, -10); c.stroke();
+    if (role === "girl" || back) { c.beginPath(); c.moveTo(10, -26); c.quadraticCurveTo(13, -14, 5, -10); c.stroke(); }
+    // бас
+    const face = back ? k.hair : k.skin;
+    c.fillStyle = face; c.beginPath(); c.ellipse(0, -39, 6, 7, 0, 0, 7); c.fill();
+    if (!back) { c.fillStyle = "#111"; c.beginPath(); c.arc(-2.2, -40, 0.8, 0, 7); c.arc(2.2, -40, 0.8, 0, 7); c.fill();
+      c.strokeStyle = "#a0523d"; c.lineWidth = 0.8; c.beginPath(); c.moveTo(-1.6, -35.5); c.quadraticCurveTo(0, -34.6, 1.6, -35.5); c.stroke(); }
+    if (role === "girl") {
+      c.strokeStyle = k.hair; c.lineWidth = 2.6;
+      [-1, 1].forEach((sd) => { c.beginPath(); c.moveTo(sd * 4.8, -38);
+        c.bezierCurveTo(sd * 7, -30, sd * (7 + Math.sin(g + sd) * 1.5), -20, sd * (6 + Math.sin(g * 1.3 + sd) * 2), back ? -6 : -10); c.stroke();
+        c.fillStyle = k.trim; c.beginPath(); c.arc(sd * (6 + Math.sin(g * 1.3 + sd) * 2), back ? -5 : -9, 1.5, 0, 7); c.fill(); });
+      if (!back) { c.fillStyle = k.hair; c.beginPath(); c.ellipse(0, -43.5, 6.2, 3, 0, Math.PI, 0); c.fill(); }
+      c.fillStyle = k.fur; c.beginPath(); c.ellipse(0, -45.5, 7.2, 2.3, 0, 0, 7); c.fill();
+      c.fillStyle = k.hat; c.beginPath(); c.moveTo(-6, -46); c.quadraticCurveTo(-5, -55, 0, -55.5); c.quadraticCurveTo(5, -55, 6, -46); c.fill();
+      c.fillStyle = k.trim; c.fillRect(-0.7, -57, 1.4, 1.8);
+      c.strokeStyle = "#f7f3ea"; c.lineCap = "round";
+      for (let f = -1; f <= 1; f++) { c.lineWidth = 1.6; c.beginPath(); c.moveTo(0, -56.5); c.quadraticCurveTo(f * 3, -63, f * 5 + Math.sin(g + f) * 1.2, -66 + Math.abs(f) * 2); c.stroke(); }
+    } else {
+      c.fillStyle = k.fur; c.beginPath(); c.ellipse(0, -45, 8, 3.4, 0, 0, 7); c.fill();
+      c.beginPath(); c.moveTo(-7.5, -45); c.quadraticCurveTo(-10, -40, -8.5, -34); c.lineTo(-5.5, -40); c.fill();
+      c.beginPath(); c.moveTo(7.5, -45); c.quadraticCurveTo(10, -40, 8.5, -34); c.lineTo(5.5, -40); c.fill();
+      c.fillStyle = k.hat; c.beginPath(); c.moveTo(-6, -46.5); c.quadraticCurveTo(-4.5, -55, 0, -55.5); c.quadraticCurveTo(4.5, -55, 6, -46.5); c.fill();
+      c.fillStyle = k.trim; c.beginPath(); c.arc(0, -55.5, 1.6, 0, 7); c.fill();
+      if (!back) { c.strokeStyle = k.hair; c.lineWidth = 0.9; c.beginPath(); c.moveTo(-2.6, -36.5); c.quadraticCurveTo(0, -35.4, 2.6, -36.5); c.stroke(); }
+      // қамшы
+      if (Math.abs(LEAN.x) < 0.2) {
+      const wa = Math.sin(g * 2) * 0.5, sd = back ? -1 : 1;
+      c.strokeStyle = k.robe; c.lineWidth = 4; c.beginPath(); c.moveTo(sd * 10, -26); c.lineTo(sd * 16, -38); c.stroke();
+      c.fillStyle = k.skin; c.beginPath(); c.arc(sd * 16.5, -39, 2, 0, 7); c.fill();
+      c.strokeStyle = "#4a2a12"; c.lineWidth = 1.3; c.beginPath(); c.moveTo(sd * 16.5, -39); c.lineTo(sd * (20 + wa * 4), -50); c.stroke();
+      c.lineWidth = 0.8; c.beginPath(); c.moveTo(sd * (20 + wa * 4), -50); c.quadraticCurveTo(sd * 30, -52 + wa * 8, sd * 33, -42 + wa * 10); c.stroke();
+      } else {
+        const rs = LEAN.x > 0 ? 1 : -1;
+        c.strokeStyle = k.robe; c.lineWidth = 4; c.lineCap = "round"; c.beginPath(); c.moveTo(rs * 10, -26); c.quadraticCurveTo(rs * 18, -12, rs * 20, 6); c.stroke();
+        c.fillStyle = k.skin; c.beginPath(); c.arc(rs * 20, 8, 2.2, 0, 7); c.fill();
+      }
+    }
+    c.restore();
+  }
+
+  function horseFront(c, x, y, s, role, phase, back) {
+    const k = COL[role], g = phase;
+    c.save(); c.translate(x, y); c.scale(s, s);
+    c.fillStyle = "rgba(0,0,0,.18)"; c.beginPath(); c.ellipse(0, 56, 24, 4, 0, 0, 7); c.fill();
+    const legF = (lx, ph, col, w, top) => {
+      const lift = Math.max(0, Math.sin(ph)) * 12;
+      c.strokeStyle = col; c.lineCap = "round"; c.lineWidth = w;
+      c.beginPath(); c.moveTo(lx, top); c.lineTo(lx * 1.04, 38 - lift * 0.4); c.stroke();
+      c.lineWidth = w * 0.65; c.beginPath(); c.moveTo(lx * 1.04, 38 - lift * 0.4); c.lineTo(lx, 54 - lift); c.stroke();
+      c.fillStyle = k.hoof; c.beginPath(); c.ellipse(lx, 55 - lift, w * 0.5, w * 0.3, 0, 0, 7); c.fill();
+    };
+    // артқы жұп аяқ (күңгірт)
+    legF(-7, g + 1.2, k.horse[2], 5.5, 20); legF(7, g + 4.3, k.horse[2], 5.5, 20);
+    if (back) {
+      // құйрық
+      c.strokeStyle = k.mane; c.lineCap = "round";
+      for (let i = -2; i <= 2; i++) { c.lineWidth = 2.6; c.beginPath(); c.moveTo(i * 0.8, -2);
+        c.bezierCurveTo(i * 2, 10, i * 3 + Math.sin(g + i) * 3, 22, i * 2.5 + Math.sin(g * 1.3 + i) * 4, 36); c.stroke(); }
+      const gr = c.createRadialGradient(-6, 2, 2, 0, 8, 24); gr.addColorStop(0, k.horse[0]); gr.addColorStop(1, k.horse[1]);
+      c.fillStyle = gr;
+      c.beginPath(); c.ellipse(-9, 10, 12.5, 17, 0.08, 0, 7); c.fill(); c.beginPath(); c.ellipse(9, 10, 12.5, 17, -0.08, 0, 7); c.fill();
+      c.strokeStyle = k.mane; for (let i = -1; i <= 1; i++) { c.lineWidth = 3; c.beginPath(); c.moveTo(i * 1.2, -4);
+        c.bezierCurveTo(i * 2, 8, i * 2 + Math.sin(g + i) * 2, 16, i * 2 + Math.sin(g * 1.3 + i) * 3, 30); c.stroke(); }
+      legF(-11, g + 0.6, k.horse[1], 6.5, 22); legF(11, g + 3.7, k.horse[1], 6.5, 22);
+      // құлақтар шабандоздың иығынан көрінеді
+      c.fillStyle = k.horse[1]; c.beginPath(); c.moveTo(-14, -28); c.lineTo(-12, -38); c.lineTo(-10, -28); c.fill();
+      c.beginPath(); c.moveTo(14, -28); c.lineTo(12, -38); c.lineTo(10, -28); c.fill();
+    } else {
+      const gr = c.createRadialGradient(-5, 4, 2, 0, 10, 26); gr.addColorStop(0, k.horse[0]); gr.addColorStop(1, k.horse[1]);
+      c.fillStyle = gr; c.beginPath(); c.ellipse(0, 12, 19, 21, 0, 0, 7); c.fill();
+      c.strokeStyle = "rgba(60,40,20,.25)"; c.lineWidth = 0.8; c.stroke();
+      c.strokeStyle = "rgba(0,0,0,.12)"; c.lineWidth = 1.2; c.beginPath(); c.moveTo(0, 2); c.lineTo(0, 26); c.stroke();
+      legF(-10, g + 0.6, k.horse[1], 6.5, 24); legF(10, g + 3.7, k.horse[1], 6.5, 24);
+    }
+    // тоқым екі жағынан
+    c.fillStyle = k.tokym; c.beginPath(); c.moveTo(-22, -6); c.lineTo(-15, -6); c.lineTo(-15, 13); c.lineTo(-21, 12); c.closePath(); c.fill();
+    c.beginPath(); c.moveTo(22, -6); c.lineTo(15, -6); c.lineTo(15, 13); c.lineTo(21, 12); c.closePath(); c.fill();
+    c.strokeStyle = k.trim; c.lineWidth = 1; c.beginPath(); c.moveTo(-21, 12); c.lineTo(-15, 13); c.moveTo(21, 12); c.lineTo(15, 13); c.stroke();
+    riderFront(c, role, g, back);
+    if (!back) {
+      // аттың басы шабандоздың алдында
+      const hg = c.createLinearGradient(0, -30, 0, 10); hg.addColorStop(0, k.horse[0]); hg.addColorStop(1, k.horse[1]);
+      c.fillStyle = k.horse[1];
+      c.beginPath(); c.moveTo(-8, -24); c.lineTo(-9.5, -35); c.lineTo(-4.5, -26); c.fill();
+      c.beginPath(); c.moveTo(8, -24); c.lineTo(9.5, -35); c.lineTo(4.5, -26); c.fill();
+      c.fillStyle = hg; c.beginPath(); c.moveTo(-8.5, -24);
+      c.bezierCurveTo(-9.5, -14, -6.5, 2, -4.8, 9); c.quadraticCurveTo(0, 12, 4.8, 9);
+      c.bezierCurveTo(6.5, 2, 9.5, -14, 8.5, -24); c.quadraticCurveTo(0, -29, -8.5, -24); c.fill();
+      if (k.blaze) { c.fillStyle = k.blaze; c.beginPath(); c.moveTo(-1.5, -24); c.lineTo(1.5, -24); c.lineTo(2.2, 4); c.lineTo(-2.2, 4); c.closePath(); c.fill(); }
+      c.fillStyle = k.mane; c.beginPath(); c.moveTo(-5, -26); c.quadraticCurveTo(Math.sin(g) * 2, -18, 5, -26); c.quadraticCurveTo(0, -30, -5, -26); c.fill();
+      c.fillStyle = "#111"; c.beginPath(); c.ellipse(-7.6, -15, 1.4, 2, 0, 0, 7); c.ellipse(7.6, -15, 1.4, 2, 0, 0, 7); c.fill();
+      c.fillStyle = "#3a2a1a"; c.beginPath(); c.ellipse(-2.6, 6.5, 1.2, 1.8, 0.3, 0, 7); c.ellipse(2.6, 6.5, 1.2, 1.8, -0.3, 0, 7); c.fill();
+      c.strokeStyle = "#5a1a12"; c.lineWidth = 1.5; c.beginPath(); c.moveTo(-8.6, -18); c.lineTo(8.6, -18); c.moveTo(-6, 0); c.lineTo(6, 0); c.moveTo(-8.6, -18); c.lineTo(-6, 0); c.moveTo(8.6, -18); c.lineTo(6, 0); c.stroke();
+      c.fillStyle = k.trim; [-6, -2, 2, 6].forEach((xx) => { c.beginPath(); c.arc(xx, -18, 1.1, 0, 7); c.fill(); });
+      c.strokeStyle = "#3a1a0a"; c.lineWidth = 0.9; c.beginPath(); c.moveTo(-6, 0); c.quadraticCurveTo(-8, -6, -5, -10); c.moveTo(6, 0); c.quadraticCurveTo(8, -6, 5, -10); c.stroke();
+    }
+    c.restore();
+  }
+
+  function flag(c, x, y, s) {
+    c.fillStyle = "#6b4423"; c.fillRect(x - 1.5 * s, y - 50 * s, 3 * s, 50 * s);
+    c.fillStyle = "#f5b041"; c.beginPath(); c.moveTo(x, y - 50 * s); c.lineTo(x + 22 * s, y - 43 * s); c.lineTo(x, y - 36 * s); c.fill();
+  }
+
+
+  function kerchief(c, x, y, s, glint) {
+    c.save(); c.translate(x, y); c.scale(s, s);
+    c.fillStyle = "rgba(0,0,0,.2)"; c.beginPath(); c.ellipse(0, 6, 10, 2.5, 0, 0, 7); c.fill();
+    c.fillStyle = "#c0141f"; c.beginPath(); c.ellipse(0, 1, 9, 6, 0, 0, 7); c.fill();
+    c.fillStyle = "#e5303a"; c.beginPath(); c.ellipse(-2, -1, 5, 3, -0.3, 0, 7); c.fill();
+    c.fillStyle = "#c0141f"; c.beginPath(); c.moveTo(-2, -4); c.lineTo(-7, -11); c.lineTo(-1, -6); c.moveTo(2, -4); c.lineTo(7, -11); c.lineTo(1, -6); c.fill();
+    c.fillStyle = "#f5c542"; c.beginPath(); c.arc(4, 2, 2.2 + glint, 0, 7); c.fill();
+    c.restore();
+  }
+
+  // ---- бір кадр
+  function scene(st, layout, x, t, takenArr, leanSide, leanAmt, role) {
+    const v = st.t_speed / 3.6, phase = t * 11, bob = Math.sin(t * 2 * Math.PI * 2.4) * 5 + Math.abs(Math.sin(t * 2 * Math.PI * 1.2)) * 3;
+    const glint = Math.abs(Math.sin(t * 6)) * 0.8;
+    // 1) Бүйірден (камера оң жақта: оң орамалдар жақын)
+    { const w = 600, h = 300, scale = 6, hx = 230;
+      steppe(cs, w, h, x * scale, bob, 150);
+      const sx = (m) => hx + (m - x) * scale;
+      cs.fillStyle = "rgba(120,90,40,.35)"; cs.fillRect(0, 226, w, 52);
+      cs.strokeStyle = "rgba(255,255,255,.55)"; cs.lineWidth = 1; cs.font = "11px system-ui"; cs.fillStyle = "#fff";
+      for (let m = 0; m <= 150; m += 25) { const px = sx(m); if (px > -20 && px < w + 20) { cs.beginPath(); cs.moveTo(px, 205); cs.lineTo(px, 280); cs.stroke(); cs.fillText(m + "м", px + 3, 290); } }
+      flag(cs, sx(150), 270, 1.5);
+      layout.forEach(([p, sd], i) => { if (!takenArr[i] && sd === -1) kerchief(cs, sx(p), 236, 1.0, glint); });
+      LEAN.v = leanAmt; LEAN.x = 0;
+      horseSide(cs, hx, 222 + bob, 1.55, role, phase, 1);
+      if (leanAmt > 0.25) { // қолды жерге созу
+        cs.strokeStyle = COL[role].robe; cs.lineWidth = 5; cs.lineCap = "round";
+        cs.beginPath(); cs.moveTo(hx + 18, 196 + bob); cs.quadraticCurveTo(hx + 34, 222, hx + 38, leanSide === 1 ? 262 : 240); cs.stroke();
+      }
+      layout.forEach(([p, sd], i) => { if (!takenArr[i] && sd === 1) kerchief(cs, sx(p), 266, 1.35, glint); });
+      LEAN.v = 0;
+    }
+    // 2) Алдынан (камера алда, артқа қарайды: шабандоздың оңы экранның сол жағында)
+    { const w = 360, h = 300;
+      steppe(cf, w, h, -x * 4, bob, 130);
+      cf.fillStyle = "rgba(120,90,40,.3)"; cf.beginPath(); cf.moveTo(150, 130); cf.lineTo(210, 130); cf.lineTo(330, 300); cf.lineTo(30, 300); cf.fill();
+      LEAN.x = -leanSide * leanAmt;
+      horseFront(cf, w / 2, 205 + bob, 2.0, role, phase, false);
+      LEAN.x = 0;
+      layout.forEach(([p, sd], i) => { const d = p - x; if (!takenArr[i] && d > 0 && d < 9) {
+        const z = 9 - d, sc = 0.7 + z * 0.22; kerchief(cf, w / 2 - sd * (55 + z * 14), 230 + z * 7, sc, glint); } });
+    }
+    // 3) Артынан (камера артта, алға қарайды)
+    { const w = 360, h = 300;
+      steppe(cr, w, h, x * 4, bob, 130);
+      cr.fillStyle = "rgba(120,90,40,.3)"; cr.beginPath(); cr.moveTo(165, 130); cr.lineTo(195, 130); cr.lineTo(330, 300); cr.lineTo(30, 300); cr.fill();
+      const toFin = TRACK - x; if (toFin < 60) flag(cr, w / 2 + 30, 132 + 300 / (toFin + 8), Math.max(.3, 6 / (toFin + 6)));
+      const vis = layout.map((k, i) => [k, i]).filter(([[p], i]) => !takenArr[i] && p - x > -1 && p - x < 45).sort((a, b) => b[0][0] - a[0][0]);
+      vis.forEach(([[p, sd]]) => { const z = (p - x) + 4; kerchief(cr, w / 2 + sd * 520 / z * 0.6, 130 + 1100 / z * 0.5, Math.max(.25, 9 / z), glint); });
+      LEAN.x = leanSide * leanAmt;
+      horseFront(cr, w / 2, 222 + bob, 2.1, role, phase, true);
+      LEAN.x = 0;
+    }
+    $("ls").textContent = L().side || ""; $("lf").textContent = L().front || ""; $("lr").textContent = L().rear || "";
+  }
+
+  function nextInfo(layout, x, takenArr) {
+    let best = null;
+    layout.forEach(([p, sd], i) => { if (!takenArr[i] && p - x > -2 && (best === null || p < best[0])) best = [p, sd]; });
+    return best;
+  }
+
+  function hud(st, x, stam, taken, time, layout, takenArr) {
+    const nx = nextInfo(layout, x, takenArr);
+    const nxt = nx ? (nx[1] < 0 ? "◀ " : "") + Math.max(0, nx[0] - x).toFixed(1) + " м" + (nx[1] > 0 ? " ▶" : "") : "—";
+    const pct = Math.max(0, Math.min(100, stam / st.t_stamina * 100));
+    $("hud").innerHTML = `<div>${L().speed}<b>${st.t_speed.toFixed(1)} ${L().kmh || ""}</b></div>
+      <div>${L().stamina}<b>${Math.round(stam)}</b><div class="meter"><i style="width:${pct}%"></i></div></div>
+      <div>${L().taken}<b>🪙 ${taken}/${layout.length}</b></div><div>${L().time}<b>${time.toFixed(2)} с</b></div>
+      <div>${L().next}<b>${nxt}</b></div>`;
+  }
+
+  function bar() {
+    const a = args, s = a.state, r = s.rides || [null, null];
+    const res = (p) => r[p] ? `🪙 ${r[p].taken}/5 · ${r[p].time.toFixed(2)} с` : (s.turn === p && !s.over ? "🐎 …" : "—");
+    $("bar").innerHTML = `<span class="pl">🟦 ${a.names[0]}</span><span class="res">${res(0)}</span>
+      <span class="res">${res(1)}</span><span class="pl">${a.names[1]} 🟩</span>`;
+    $("msg").textContent = a.message || "";
+  }
+
+  // ---- басқару
+  function controls() {
+    const c = $("ctrl");
+    if (mode === "ready") { c.innerHTML = `<button class="go" id="go">▶ ${L().start}</button>`; $("go").onclick = start; }
+    else if (mode === "run") {
+      c.innerHTML = `<button id="bl">⬅ ${L().left}</button><button id="br">${L().right} ➡</button>`;
+      $("bl").addEventListener("pointerdown", (e) => { e.preventDefault(); lean(-1); });
+      $("br").addEventListener("pointerdown", (e) => { e.preventDefault(); lean(1); });
+    } else c.innerHTML = "";
+    setH();
+  }
+  document.addEventListener("keydown", (e) => { if (mode !== "run") return;
+    if (e.code === "ArrowLeft") { e.preventDefault(); lean(-1); } if (e.code === "ArrowRight") { e.preventDefault(); lean(1); } });
+
+  function start() {
+    const s = args.state, me = args.me, st = s.stats[me];
+    run = { st, me, att: [], t0: performance.now() + 3000, T: TRACK / (st.t_speed / 3.6), leanT: -9, leanSide: 0, done: false, flash: "", flashT: -9 };
+    mode = "run"; controls();
+  }
+  function lean(side) {
+    const r = run; if (!r || r.done) return;
+    const t = (performance.now() - r.t0) / 1000; if (t < 0 || t > r.T || r.att.length >= MAX_ATTEMPTS) return;
+    const before = ride(r.st, args.state.layout, r.att).taken;
+    r.att.push([t, side]); r.leanT = t; r.leanSide = side;
+    const after = ride(r.st, args.state.layout, r.att);
+    r.flash = after.taken > before ? "🪙 +1" : "⏱ +" + PENALTY + " с"; r.flashT = t;
+  }
+  const leanAmt = (t, lt) => { const d = t - lt; return d < 0 || d > 0.5 ? 0 : Math.sin(d / 0.5 * Math.PI); };
+
+  function stepRun(now) {
+    const r = run, s = args.state, t = (now - r.t0) / 1000;
+    const res = ride(r.st, s.layout, r.att);
+    if (t < 0) { $("big").textContent = Math.ceil(-t); scene(r.st, s.layout, 0, 0, res.takenArr, 0, 0, roleOf(r.me)); hud(r.st, 0, r.st.t_stamina, 0, 0, s.layout, res.takenArr); return; }
+    const tt = Math.min(t, r.T), x = r.st.t_speed / 3.6 * tt;
+    $("big").textContent = (tt - r.flashT < 0.7) ? r.flash : "";
+    scene(r.st, s.layout, x, tt, res.takenArr, r.leanSide, leanAmt(tt, r.leanT), roleOf(r.me));
+    const stam = Math.min(r.st.t_stamina, res.stam + REGEN * (tt - (r.att.length ? r.att[r.att.length - 1][0] : 0)));
+    hud(r.st, x, r.att.length ? stam : r.st.t_stamina, res.taken, tt + res.pen, s.layout, res.takenArr);
+    if (t >= r.T && !r.done && !pending) {
+      r.done = true; pending = true; justRode = true;
+      $("big").textContent = "🏁 " + res.taken + "/" + s.layout.length;
+      send("streamlit:setComponentValue", { value: { attempts: r.att.slice(), nonce: Date.now() + Math.random() }, dataType: "json" });
+      mode = "wait"; controls();
+    }
+  }
+
+  function stepReplay(now) {
+    const rp = replay, s = args.state, p = rp.last.player, st = s.stats[p];
+    const T = TRACK / (st.t_speed / 3.6), t = Math.min(T, (now - rp.t0) / 1000);
+    const att = rp.last.log.filter((a) => a[0] <= t).map((a) => [a[0], a[1]]);
+    const res = ride(st, s.layout, att);
+    const lastA = att.length ? rp.last.log[att.length - 1] : null;
+    scene(st, s.layout, st.t_speed / 3.6 * t, t, res.takenArr, lastA ? lastA[1] : 0, lastA ? leanAmt(t, lastA[0]) : 0, roleOf(p));
+    hud(st, st.t_speed / 3.6 * t, st.t_stamina, res.taken, t + res.pen, s.layout, res.takenArr);
+    $("big").textContent = lastA && t - lastA[0] < 0.7 ? (lastA[2] >= 0 ? "🪙 +1" : "⏱ +" + PENALTY + " с") : "";
+    if (t >= T) { $("big").textContent = `🏁 ${args.names[p]}: ${rp.last.taken}/${s.layout.length}`;
+      if ((now - rp.t0) / 1000 > T + 2.2) { replay = null; $("big").textContent = ""; decide(); } }
+  }
+
+  function frame(now) {
+    requestAnimationFrame(frame);
+    if (!args) return;
+    if (replay) stepReplay(now);
+    else if (mode === "run" && run) stepRun(now);
+    else { const s = args.state, me = args.me == null ? 0 : args.me, st = s.stats[me], t = now / 1000;
+      const takenArr = s.layout.map(() => false);
+      scene(st, s.layout, 0, t * 0.12, takenArr, 0, 0, roleOf(me)); hud(st, 0, st.t_stamina, 0, 0, s.layout, takenArr); }
+  }
+
+  function decide() {
+    const s = args.state;
+    if (replay) return;
+    if (args.clickable && !s.over && !pending) { if (mode !== "run") { mode = "ready"; run = null; } }
+    else if (mode !== "run" || !args.clickable) mode = "idle";
+    controls();
+  }
+
+  window.addEventListener("message", (ev) => {
+    const d = ev.data;
+    if (!d || d.type !== "streamlit:render") return;
+    const prev = args; args = d.args;
+    if (!prev || prev.state.turn !== args.state.turn || (prev.state.last || {}).id !== (args.state.last || {}).id) { pending = false; if (mode === "wait") mode = "idle"; }
+    bar();
+    const last = args.state.last, key = last ? (args.room || "") + ":" + last.id : null;
+    if (!first && last && key !== seen) { seen = key;
+      if (justRode && last.player === args.me) { justRode = false; } else { replay = { last, t0: performance.now() }; }
+      mode = "idle"; run = null; }
+    else seen = key;
+    first = false;
+    decide(); setH();
+  });
+  window.addEventListener("resize", () => args && setH());
+  requestAnimationFrame(frame);
+  send("streamlit:componentReady", { apiVersion: 1 });
+})();
+</script>
+</body>
+</html>

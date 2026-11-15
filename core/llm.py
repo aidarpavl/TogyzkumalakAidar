@@ -116,6 +116,8 @@ RULES_BY_GAME = {
               "wind drifts arrows sideways. You choose the release moment; the aim is then set automatically."),
     "kyzkuu": ("Kyz kuu: a horse chase. You choose a whipping style: each whip speeds the horse for 0.6 s but costs "
                "4 stamina; below 15 stamina the horse tires. Pick the style that wins the chase."),
+    "tenge": ("Tenge alu: galloping 150 m, the rider leans left or right to pick up 5 red kerchiefs with coins from the "
+              "ground. Each wrong lean costs a 2 s penalty; leaning uses stamina. Choose a timing style."),
     "asyk": ("Asyk atu (Kazakh knucklebones): asyks stand inside a ring; you shoot your heavy saqa from the "
              "bottom line; asyks knocked out of the ring are yours; if you capture any, you shoot again."),
 }

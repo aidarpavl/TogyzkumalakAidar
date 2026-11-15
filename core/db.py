@@ -21,7 +21,7 @@ _URL = None
 _PG = False
 _INIT = False
 
-GAMES = ("togyz", "asyk", "doyby", "jamby", "kyzkuu")
+GAMES = ("togyz", "asyk", "doyby", "jamby", "kyzkuu", "tenge")
 
 # Чемпионат параметрлері (settings кестесі арқылы өзгертуге болады)
 DEFAULTS = {
@@ -179,6 +179,10 @@ MIGRATIONS = [
     ("rooms", "game", "TEXT NOT NULL DEFAULT 'togyz'"),
     ("payments", "kind", "TEXT NOT NULL DEFAULT 'attempts'"),
     ("payments", "qty", "INTEGER NOT NULL DEFAULT 1"),
+    ("horses", "t_speed", "DOUBLE PRECISION NOT NULL DEFAULT 1"),
+    ("horses", "t_stamina", "DOUBLE PRECISION NOT NULL DEFAULT 1"),
+    ("horses", "t_accuracy", "DOUBLE PRECISION NOT NULL DEFAULT 1"),
+    ("horses", "t_bonus", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 
@@ -564,19 +568,54 @@ def champ_history(username: str, limit: int = 30) -> list[dict]:
 # ---------------------------------------------------------------- Payments
 
 def create_payment(username: str, receipt: str, image_b64: str | None, kind: str = "attempts",
-                   qty: int = 1) -> str:
-    """kind: 'attempts' — чемпионат әрекеттері; 'upg_<stat>' — Қыз қуу атын жетілдіру (qty рет)."""
+                   qty: int = 1, code: str = "") -> str:
+    """kind: 'attempts' — чемпионат әрекеттері (әкімші растайды);
+    'upg_<stat>' — атты жетілдіру: бірден қолданылады (әкімші кейін болдырмауы мүмкін)."""
     pid = new_id(10)
     qty = max(1, min(50, int(qty)))
+    now = time.time()
     if kind == "attempts":
-        amount, att = int_setting("price"), int_setting("attempts_per_pay")
+        # Kaspi түсініктемесіндегі «1» коды — әрекеттер бірден беріледі (әкімші кейін болдырмауы мүмкін)
+        auto = str(code).strip() == "1"
+        amount, att, status = int_setting("price"), int_setting("attempts_per_pay"), "approved" if auto else "pending"
         qty = 1
     else:
-        amount, att = int_setting("upgrade_price") * qty, 0
-    execute("INSERT INTO payments (id, username, amount, attempts, receipt, image, status, created, kind, qty) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (pid, username, amount, att, receipt.strip()[:100], image_b64, "pending", time.time(), kind, qty))
+        amount, att, status = int_setting("upgrade_price") * qty, 0, "approved"
+    execute("INSERT INTO payments (id, username, amount, attempts, receipt, image, status, created, kind, qty, admin, decided) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (pid, username, amount, att, receipt.strip()[:100], image_b64, status, now, kind, qty,
+             "auto" if status == "approved" else None, now if status == "approved" else None))
+    if status == "approved":
+        _ensure_wallet(username)
+        if kind == "attempts":
+            execute("UPDATE wallet SET attempts = attempts + ?, paid_total = paid_total + ? WHERE username = ?",
+                    (att, amount, username))
+        else:
+            upgrade_horse(username, kind[4:], qty)
+            execute("UPDATE wallet SET paid_total = paid_total + ? WHERE username = ?", (amount, username))
     return pid
+
+
+def revoke_payment(pid: str, admin: str) -> bool:
+    """Автоматты жетілдіруді болдырмау: төлем келмесе, ат көрсеткіші қайта азаяды."""
+    row = execute("SELECT * FROM payments WHERE id = ?", (pid,), "one")
+    if not row:
+        return False
+    n = execute("UPDATE payments SET status = 'revoked', admin = ?, decided = ? WHERE id = ? AND status = 'approved'",
+                (admin, time.time(), pid))
+    if n and (row.get("kind") or "attempts") == "attempts":
+        execute("UPDATE wallet SET attempts = CASE WHEN attempts > ? THEN attempts - ? ELSE 0 END, "
+                "paid_total = paid_total - ? WHERE username = ?",
+                (row["attempts"], row["attempts"], row["amount"], row["username"]))
+        return True
+    if n:
+        stat = row["kind"][4:]
+        if stat in HORSE_STATS:
+            f = 1.05 ** int(row.get("qty") or 1)
+            execute(f"UPDATE horses SET {stat} = {stat} / ?, upgrades = upgrades - ? WHERE username = ?",
+                    (f, int(row.get("qty") or 1), row["username"]))
+        execute("UPDATE wallet SET paid_total = paid_total - ? WHERE username = ?", (row["amount"], row["username"]))
+    return bool(n)
 
 
 def payments(status: str | None = None, username: str | None = None, limit: int = 100) -> list[dict]:
@@ -620,7 +659,8 @@ def decide_payment(pid: str, approve: bool, admin: str, note: str = "") -> bool:
 
 # ---------------------------------------------------------------- Қыз қуу: ат
 
-HORSE_STATS = ("burst", "speed", "stamina", "reverse")
+HORSE_STATS = ("burst", "speed", "stamina", "reverse", "t_speed", "t_stamina", "t_accuracy")
+BONUS_COLS = ("bonus", "t_bonus")
 
 
 def get_horse(username: str) -> dict:
@@ -637,19 +677,31 @@ def upgrade_horse(username: str, stat: str, times: int = 1, pct: float = 5.0) ->
             (f, int(times), username))
 
 
-def add_horse_bonus(username: str, pct: int) -> None:
+def boost_horse(username: str, stats: tuple, pct: float) -> None:
+    """Жеңіс бонусы — таңдаусыз, барлық көрсеткішке бірден +pct%."""
     get_horse(username)
-    execute("UPDATE horses SET bonus = bonus + ? WHERE username = ?", (int(pct), username))
+    f = 1 + pct / 100.0
+    sets = ", ".join(f"{k} = {k} * ?" for k in stats if k in HORSE_STATS)
+    if sets:
+        execute(f"UPDATE horses SET {sets} WHERE username = ?", tuple([f] * len(stats)) + (username,))
 
 
-def apply_horse_bonus(username: str, stat: str) -> int:
+def add_horse_bonus(username: str, pct: int, col: str = "bonus") -> None:
+    if col not in BONUS_COLS:
+        return
+    get_horse(username)
+    execute(f"UPDATE horses SET {col} = {col} + ? WHERE username = ?", (int(pct), username))
+
+
+def apply_horse_bonus(username: str, stat: str, col: str = "bonus") -> int:
     """Жиналған бонус %-ын таңдалған көрсеткішке қосу."""
     h = get_horse(username)
-    if stat not in HORSE_STATS or h["bonus"] <= 0:
+    if stat not in HORSE_STATS or col not in BONUS_COLS or (h.get(col) or 0) <= 0:
         return 0
-    n = execute(f"UPDATE horses SET {stat} = {stat} * ?, bonus = 0 WHERE username = ? AND bonus = ?",
-                (1 + h["bonus"] / 100.0, username, h["bonus"]))
-    return h["bonus"] if n else 0
+    b = h[col]
+    n = execute(f"UPDATE horses SET {stat} = {stat} * ?, {col} = 0 WHERE username = ? AND {col} = ?",
+                (1 + b / 100.0, username, b))
+    return b if n else 0
 
 
 # ---------------------------------------------------------------- Fund / withdrawals
@@ -690,6 +742,16 @@ def request_withdrawal(username: str, phone: str) -> tuple[bool, str]:
     execute("INSERT INTO withdrawals (id, username, points, amount, phone, status, created) VALUES (?,?,?,?,?,?,?)",
             (new_id(10), username, pts, amount, phone, "pending", time.time()))
     return True, str(amount)
+
+
+def payment_summary(username: str) -> dict:
+    """Шығаруды тексеру үшін: ойыншының төлем тарихы."""
+    rows = execute("SELECT status, admin, amount FROM payments WHERE username = ?", (username,), "all")
+    return {"approved": sum(r["amount"] for r in rows if r["status"] == "approved"),
+            "auto": sum(1 for r in rows if r["status"] == "approved" and r["admin"] == "auto"),
+            "manual": sum(1 for r in rows if r["status"] == "approved" and r["admin"] not in (None, "auto")),
+            "revoked": sum(1 for r in rows if r["status"] == "revoked"),
+            "pending": sum(1 for r in rows if r["status"] == "pending")}
 
 
 def withdrawals(status: str | None = None, username: str | None = None, limit: int = 100) -> list[dict]:
