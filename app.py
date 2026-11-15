@@ -6,13 +6,51 @@ import streamlit as st
 st.set_page_config(page_title="Ұлттық ойындар · Тоғызқұмалақ · Асық · Дойбы · Жамбы", page_icon="🟤", layout="wide",
                    initial_sidebar_state="collapsed")
 
-import core  # noqa: E402
+import importlib  # noqa: E402
+import re  # noqa: E402
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
 
-if getattr(core, "VERSION", None) != "2.1":
-    st.error("⚠️ GitHub-тағы `core/` бумасы ескі. `core/` ішіндегі БАРЛЫҚ файлдарды архивтегі жаңа нұсқамен "
-             "ауыстырыңыз: `__init__.py, asyk.py, db.py, draughts.py, engine.py, i18n.py, jamby.py, llm.py`.\n\n"
-             "⚠️ Папка `core/` на GitHub устарела. Замените ВСЕ файлы в `core/` новыми из архива: "
-             "`__init__.py, asyk.py, db.py, draughts.py, engine.py, i18n.py, jamby.py, llm.py`.")
+REQUIRED = "2.1"
+_ROOT = Path(__file__).resolve().parent
+if str(_ROOT) not in sys.path[:1]:
+    sys.path.insert(0, str(_ROOT))
+
+
+def _file_version():
+    try:
+        txt = (_ROOT / "core" / "__init__.py").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = re.search(r'VERSION\s*=\s*"([^"]+)"', txt)
+    return m.group(1) if m else None
+
+
+def _purge_modules():
+    """Streamlit Cloud жаңартудан кейін ескі модульдерді жадта қалдырады — тазалаймыз."""
+    for name in list(sys.modules):
+        if name in ("core", "ui") or name.startswith(("core.", "ui.")):
+            del sys.modules[name]
+    importlib.invalidate_caches()
+
+
+_fv = _file_version()
+if _fv == REQUIRED:
+    import core  # noqa: E402
+
+    if getattr(core, "VERSION", None) != REQUIRED or not Path(getattr(core, "__file__", "") or "").is_relative_to(_ROOT):
+        _purge_modules()
+        import core  # noqa: E402,F811
+else:
+    _files = sorted(p.name for p in (_ROOT / "core").glob("*")) if (_ROOT / "core").exists() else []
+    st.error("⚠️ GitHub-тағы `core/` бумасы ескі немесе толық емес. / Папка `core/` на GitHub устарела или неполная.")
+    st.markdown(
+        f"- Табылған нұсқа / найдена версия: **{_fv or '—'}**, керек / нужна: **{REQUIRED}**\n"
+        f"- `core/` ішінде / в `core/`: `{', '.join(_files) or 'жоқ / нет'}`\n"
+        f"- Керек файлдар / нужные файлы: `__init__.py, asyk.py, db.py, draughts.py, engine.py, i18n.py, jamby.py, llm.py`\n"
+        f"- `core/__init__.py` ішінде дәл осы жол болуы керек / в `core/__init__.py` должна быть строка: "
+        f"`VERSION = \"{REQUIRED}\"`\n"
+        f"- Файлдарды ауыстырғаннан кейін: **Manage app → ⋮ → Reboot app** / после замены: **Manage app → ⋮ → Reboot app**")
     st.stop()
 
 from core import db  # noqa: E402
