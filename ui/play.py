@@ -29,7 +29,9 @@ def move_list_html(moves: list[str]) -> str:
 
 def result_text(spec: Spec, s: dict, me, names) -> str:
     w = s["winner"]
-    reason = tr(f"reason_{s.get('reason') or 'score'}")
+    r = s.get("reason") or "score"
+    # «score» — қалыпты аяқталу: себебін жазбаймыз (тек есеп). Берілу, уақыт т.б. — көрсетіледі.
+    reason = "" if r == "score" else tr(f"reason_{r}")
     if w == -1:
         head = tr("draw")
     elif me is None:
@@ -37,7 +39,7 @@ def result_text(spec: Spec, s: dict, me, names) -> str:
     else:
         head = tr("you_win") if w == me else tr("you_lose")
     sc = spec.score(s)
-    return f"{head}<br><small>{sc[0]} : {sc[1]} — {reason}</small>"
+    return f"{head}<br><small>{sc[0]} : {sc[1]}{' — ' + reason if reason else ''}</small>"
 
 
 # ---------------------------------------------------------------- ИИ / жергілікті
