@@ -109,6 +109,7 @@ CSS = """
 .gc-jamby {background: linear-gradient(135deg, #2e5a1c, #6a8f2d 60%, #d9c46a);}
 .gc-kyzkuu {background: linear-gradient(135deg, #7a1f4e, #c0392b 55%, #f5b041);}
 .gc-tenge {background: linear-gradient(135deg, #6b4a12, #b8860b 55%, #f5c542);}
+.gc-kokpar {background: linear-gradient(135deg, #1d3d6e, #2e6b3a 50%, #a51d2a);}
 .podium {display: flex; gap: 10px; justify-content: center; align-items: flex-end; margin: 6px 0 14px;}
 .podium div {flex: 1; max-width: 200px; text-align: center; border-radius: 14px 14px 4px 4px; padding: 10px 6px; color: #fff;
              box-shadow: 0 4px 12px #0003; font-weight: 700;}

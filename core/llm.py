@@ -118,6 +118,8 @@ RULES_BY_GAME = {
                "4 stamina; below 15 stamina the horse tires. Pick the style that wins the chase."),
     "tenge": ("Tenge alu: galloping 150 m, the rider leans left or right to pick up 5 red kerchiefs with coins from the "
               "ground. Each wrong lean costs a 2 s penalty; leaning uses stamina. Choose a timing style."),
+    "kokpar": ("Kokpar: 3v3 horseback game; riders pick up a heavy serke (goat bag) from the ground at low speed, "
+               "fight for it in tug-of-war duels (tap fast) and carry it into the opponent's kazan to score."),
     "asyk": ("Asyk atu (Kazakh knucklebones): asyks stand inside a ring; you shoot your heavy saqa from the "
              "bottom line; asyks knocked out of the ring are yours; if you capture any, you shoot again."),
 }
