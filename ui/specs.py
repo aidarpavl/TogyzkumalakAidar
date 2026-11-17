@@ -7,8 +7,9 @@ from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import asyk, db, draughts, engine, jamby, kokpar, kyzkuu, llm, tenge
-from core.i18n import RULES, RULES_ASYK, RULES_DOYBY, RULES_JAMBY, RULES_KOKPAR, RULES_KYZKUU, RULES_TENGE
+from core import asyk, audaryspak, db, draughts, engine, jamby, kokpar, kyzkuu, llm, tenge
+from core.i18n import (RULES, RULES_ASYK, RULES_AUDARYSPAK, RULES_DOYBY, RULES_JAMBY, RULES_KOKPAR, RULES_KYZKUU,
+                       RULES_TENGE)
 from ui.common import ss, take, tick, tr
 
 _ROOT = Path(__file__).resolve().parent.parent / "components"
@@ -19,6 +20,7 @@ _jamby = components.declare_component("jamby_field", path=str(_ROOT / "jamby"))
 _kyzkuu = components.declare_component("kyzkuu_field", path=str(_ROOT / "kyzkuu"))
 _tenge = components.declare_component("tenge_field", path=str(_ROOT / "tenge"))
 _kokpar = components.declare_component("kokpar_field", path=str(_ROOT / "kokpar"))
+_audaryspak = components.declare_component("audaryspak_field", path=str(_ROOT / "audaryspak"))
 
 
 class Spec:
@@ -682,5 +684,106 @@ class Kokpar(Spec):
         return 0.3
 
 
+class Audaryspak(Spec):
+    key = "audaryspak"
+    icon = "🤼"
+    has_options = True
+
+    def rules(self, lang):
+        return RULES_AUDARYSPAK[lang]
+
+    def options_ui(self, prefix):
+        rs = st.radio(tr("au_round_len"), [60, 45], horizontal=True, key=f"{prefix}_aulen",
+                      format_func=lambda x: tr(f"au_len_{x}"))
+        return {"round_s": rs}
+
+    def color_label(self, c):
+        return {"white": "🟦 1", "black": "🟥 2"}.get(c, tr("col_random"))
+
+    def new_state(self, opts=None):
+        return audaryspak.new_state(opts)
+
+    def after_start(self, g):
+        s = g["state"]
+        if g["mode"] == "ai":
+            h = g["human"]
+            lvl = g["level"] if g["level"] in audaryspak.LEVEL else "hard"
+            s["level"] = lvl
+            s["solo"] = True
+            s["turn"] = h
+            s["stats"][h] = _horse_stats(g["names"][h], not ss.guest, audaryspak)
+        else:
+            s["level"] = "medium"
+            for p in (0, 1):
+                s["stats"][p] = _horse_stats(g["names"][p], g["names"][p] == ss.user and not ss.guest, audaryspak)
+        s["ai_stats"] = audaryspak.ai_stats(s["level"])
+        s["ready"] = True
+
+    def on_active(self, room):
+        s = room["state"]
+        if s.get("ready") or room["status"] != "active":
+            return None
+        s["stats"] = [_horse_stats(room["white"], not room["white_guest"], audaryspak),
+                      _horse_stats(room["black"], not room["black_guest"], audaryspak)]
+        s["level"] = "medium"
+        s["ai_stats"] = audaryspak.ai_stats("medium")
+        s["ready"] = True
+        return s
+
+    def apply(self, s, mv):
+        return audaryspak.play(s, {"inputs": list(mv.get("inputs", []))})
+
+    def ai(self, s, level):
+        return {"inputs": []}
+
+    def render(self, s, bottom, names, clickable, key, message="", clocks=None, clock_running=False, room=""):
+        view = {k: v for k, v in s.items() if k != "inputs"}
+        val = _audaryspak(state=view, me=bottom, names=names,
+                          ai_name=tr("au_vs", lvl=tr(f"lv_{s.get('level', 'medium')}")),
+                          clickable=clickable, message=message,
+                          labels={"side": tr("kk_side"), "front": tr("kk_front"), "rear": tr("kk_rear"),
+                                  "stamina": tr("kk_stamina"), "start": tr("au_start"), "pull": tr("au_pull"),
+                                  "push": tr("au_push"), "twist": tr("au_twist"), "hold": tr("au_hold"),
+                                  "free": tr("au_free"), "rounds": tr("au_rounds"), "round": tr("au_round"),
+                                  "myBal": tr("au_my_bal"), "opBal": tr("au_op_bal"), "state": tr("au_state"),
+                                  "gripOn": tr("au_grip"), "approach": tr("au_approach"), "counter": tr("au_counter"),
+                                  "freed": tr("au_freed"), "warnOut": tr("au_warn"), "roundWon": tr("au_round_won"),
+                                  "roundLost": tr("au_round_lost"), "roundDraw": tr("au_round_draw")},
+                          room=room, token=tick(), key=key, default=None)
+        v = take(val, key)
+        if v and clickable:
+            return {"inputs": v.get("inputs", [])}
+        return None
+
+    def score(self, s):
+        return audaryspak.score(s)
+
+    def status(self, s, names):
+        parts = [tr("au_result", name=names[p], w=r["rw"], l=r["rl"]) for p, r in enumerate(s["rides"]) if r]
+        if not s["over"]:
+            parts.append(tr("au_your_turn"))
+        return " · ".join(parts)
+
+    def hint(self, s):
+        return tr("au_hint")
+
+    def coach(self, cfg, s, lang):
+        pos = f"Audaryspak, opponent level {s.get('level')}, your stats {s['stats'][s['turn']]}."
+        return llm.coach_generic(cfg, "audaryspak", pos, tr("au_hint"), lang)
+
+    def rewards(self, s, players, level, champ, mode):
+        w = s.get("winner")
+        if w not in (0, 1):
+            return []
+        name, reg = players[w]
+        if not reg or (mode == "ai" and not champ and level not in ("hard", "master", "llm")):
+            return []
+        db.boost_horse(name, audaryspak.STATS, 5)
+        return [tr("au_bonus", p=5)]
+
+    def anim_delay(self, s):
+        return 0.3
+
+
 SPECS = {"togyz": Togyz(), "asyk": Asyk(), "doyby": Doyby(), "jamby": Jamby(), "kyzkuu": Kyzkuu(), "tenge": Tenge(),
-         "kokpar": Kokpar()}
+         "kokpar": Kokpar(), "audaryspak": Audaryspak()}

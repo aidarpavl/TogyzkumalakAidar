@@ -120,6 +120,9 @@ RULES_BY_GAME = {
               "ground. Each wrong lean costs a 2 s penalty; leaning uses stamina. Choose a timing style."),
     "kokpar": ("Kokpar: 3v3 horseback game; riders pick up a heavy serke (goat bag) from the ground at low speed, "
                "fight for it in tug-of-war duels (tap fast) and carry it into the opponent's kazan to score."),
+    "audaryspak": ("Audaryspak: horseback wrestling, two riders grip each other inside a 40 m ring; moves PULL, PUSH, "
+                   "TWIST beat each other like rock-paper-scissors (twist counters pull, pull counters push, push "
+                   "counters twist); HOLD protects balance; whoever loses balance falls. Best of 3 rounds."),
     "asyk": ("Asyk atu (Kazakh knucklebones): asyks stand inside a ring; you shoot your heavy saqa from the "
              "bottom line; asyks knocked out of the ring are yours; if you capture any, you shoot again."),
 }

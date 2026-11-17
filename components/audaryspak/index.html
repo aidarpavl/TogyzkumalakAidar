@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: transparent; font-family: "Segoe UI", Roboto, system-ui, sans-serif; }
+  #wrap { max-width: 1100px; margin: 0 auto; padding: 4px 2px 8px; user-select: none; }
+  .bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 12px; margin: 4px 0;
+         color: #fff8ec; background: linear-gradient(90deg, #3d2412, #5c3518); font-size: clamp(12px, 3.3vw, 15px); flex-wrap: wrap; }
+  .pl { font-weight: 700; } .res { font-weight: 800; color: #f5b041; font-size: 1.15em; }
+  .views { display: grid; grid-template-columns: 2fr 1.2fr 1.2fr; gap: 6px; align-items: start; }
+  .view { position: relative; }
+  .view span { position: absolute; left: 8px; top: 6px; color: #fff; font-size: 12px; font-weight: 700; background: #0006; padding: 1px 7px; border-radius: 8px; z-index: 2; }
+  canvas { width: 100%; display: block; border-radius: 12px; box-shadow: 0 4px 14px #0005; }
+  .view canvas.gl3d { position: absolute; left: 0; top: 0; width: 100%; height: 100%; box-shadow: none; pointer-events: none; background: transparent; }
+  @media (max-width: 700px) { .views { grid-template-columns: 1fr 1fr; } .view.side { grid-column: 1 / 3; } }
+  .hud { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 6px; }
+  .hud div { background: #3d2412; color: #fff8ec; border-radius: 10px; padding: 5px 8px; font-size: 12px; }
+  .hud b { display: block; font-size: 18px; color: #f5b041; } .hud b.small { font-size: 13px; }
+  .meter { height: 8px; border-radius: 5px; background: #0005; overflow: hidden; margin-top: 3px; }
+  .meter i { display: block; height: 100%; background: linear-gradient(90deg, #e74c3c, #f1c40f, #2ecc71); }
+  @media (max-width: 700px) { .hud { grid-template-columns: repeat(3, 1fr); } }
+  .ctrl { display: flex; gap: 10px; margin-top: 8px; align-items: center; }
+  #joy { width: 116px; height: 116px; border-radius: 50%; background: radial-gradient(circle, #5c3518 0%, #3d2412 70%); position: relative; flex: 0 0 auto;
+         touch-action: none; box-shadow: inset 0 0 12px #000a; }
+  #knob { position: absolute; left: 33px; top: 33px; width: 50px; height: 50px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #ffe08a, #e0a458);
+          box-shadow: 0 3px 8px #0008; pointer-events: none; }
+  .btns { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .btns .x { grid-column: 1 / 3; background: linear-gradient(135deg, #2c3e50, #5d6d7e); box-shadow: 0 4px 0 #1b2631; padding: 10px; }
+  .btns .hold { background: linear-gradient(135deg, #1e8449, #58d68d); box-shadow: 0 4px 0 #145a32; }
+  .hud .alert { background: #c0392b; animation: blink .4s infinite alternate; } @keyframes blink { to { background: #7b241c; } }
+  .hud small { display: block; opacity: .8; }
+  button { border: 0; border-radius: 14px; padding: 16px 8px; font-size: clamp(15px, 4.2vw, 20px); font-weight: 800; color: #fff; cursor: pointer;
+           background: linear-gradient(135deg, #b5452d, #e0a458); box-shadow: 0 4px 0 #7a1f1f; touch-action: manipulation; }
+  button:active { transform: translateY(3px); box-shadow: 0 1px 0 #7a1f1f; }
+  button.go { flex: 1; background: linear-gradient(135deg, #1e8449, #58d68d); box-shadow: 0 4px 0 #145a32; }
+  .msg { text-align: center; color: #fff8ec; font-weight: 600; font-size: clamp(12px, 3.4vw, 15px); padding: 6px 10px; margin-top: 6px; border-radius: 10px; background: #7a4419; }
+  .msg:empty { display: none; }
+  .big { position: absolute; inset: 0; display: flex; align-items: flex-start; padding-top: 40px; justify-content: center; text-align: center; font-size: 30px;
+         font-weight: 900; color: #fff; text-shadow: 0 2px 8px #000; pointer-events: none; z-index: 3; }
+  .keys { font-size: 11px; color: #7a4419; text-align: center; margin-top: 4px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div class="bar" id="bar"></div>
+  <div class="views">
+    <div class="view side"><canvas id="cs" width="600" height="300"></canvas><span id="ls"></span><div class="big" id="big"></div></div>
+    <div class="view"><canvas id="cf" width="360" height="300"></canvas><span id="lf"></span></div>
+    <div class="view"><canvas id="cr" width="360" height="300"></canvas><span id="lr"></span></div>
+  </div>
+  <div class="hud" id="hud"></div>
+  <div class="ctrl" id="ctrl"></div>
+  <div class="keys">⌨ WASD / ← ↑ → ↓ · J — тарту · K — итеру · L/Q/E — бұру · Space (ұстау) — тепе-теңдік · X — айналып кету</div>
+  <div class="msg" id="msg"></div>
+</div>
+<script>
+(function () {
+  // ================= AUDARYSPAK SIM (core/audaryspak.py-мен бірдей) =================
+  const A = (function () {
+    const DT = 0.05, ARENA = 20.0, GRIP_D = 2.2, WIND = 10, OPEN = 6;
+    const BASE = { a_stability: 1.0, a_agility: 1.0, a_stamina: 100.0, a_power: 1.0, a_grip: 1.0, a_balance: 100.0 };
+    const LEVEL = { easy: [8, 30, 4], medium: [5, 22, 8], hard: [4, 18, 12], master: [3, 14, 15] };
+    const COUNTER = { pull: "twist", push: "pull", twist: "push" };
+    function mult(att, dfn) {
+      const dact = dfn.act, winding = dfn.wind > 0;
+      if (att === "pull") { if (winding && dact === "twist") return -1.0; if (dfn.hold === 1) return 0.4; return 1.0; }
+      if (att === "push") { if (winding && dact === "pull") return -1.0; if (dfn.hold === 1) return 1.6; return 1.0; }
+      if (winding && dact === "push") return -1.0;
+      if (winding && dact === "pull") return 1.5;
+      if (dfn.hold === 1) return 0.5;
+      return 1.0;
+    }
+    class Sim {
+      constructor(hs, level, roundS, aiSt) {
+        this.level = level; const lv = LEVEL[level] || LEVEL.medium;
+        this.react = lv[0]; this.every = lv[1]; this.notice = lv[2];
+        this.p = [hs, aiSt].map((st) => ({ stab: st.a_stability, agi: st.a_agility, smax: st.a_stamina, pow: st.a_power, grip: st.a_grip,
+          bmax: st.a_balance, x: 0.0, y: 0.0, dx: 0.0, dy: 0.0, s: st.a_stamina, b: st.a_balance, act: "", wind: 0, open: 0, hold: 0,
+          cd: 0, hit: 0, adv: 0.0, warn: 0 }));
+        this.roundSteps = Math.trunc(roundS / DT); this.round = 1; this.rounds = [0, 0]; this.n = 0; this.rn = 0;
+        this.grip = false; this.hist = []; this.seen = -1; this.events = []; this.over = false; this.reset();
+      }
+      reset() {
+        this.p.forEach((r, i) => { r.x = i === 0 ? -8.0 : 8.0; r.y = 0.0; r.dx = 0.0; r.dy = 0.0; r.s = r.smax; r.b = r.bmax;
+          r.act = ""; r.wind = 0; r.open = 0; r.hold = 0; r.cd = 10; r.hit = 0; r.warn = 0; });
+        this.grip = false; this.rn = 0; this.seen = -1;
+      }
+      start(i, act) {
+        const r = this.p[i];
+        if (r.wind > 0 || r.s < 6.0 || !this.grip) return;
+        r.s = r.s - 6.0; r.act = act; r.wind = WIND;
+        if (i === 0) { this.hist.push(act); if (this.hist.length > 5) this.hist = this.hist.slice(-5); }
+      }
+      disengage(i) {
+        const r = this.p[i], o = this.p[1 - i];
+        if (!this.grip || r.cd > 0 || r.s < 10.0) return;
+        r.s = r.s - 10.0; r.cd = 80;
+        if (r.agi * r.s >= 0.6 * o.grip * o.s) { this.grip = false; r.x = r.x <= o.x ? r.x - 3.0 : r.x + 3.0; o.act = ""; o.wind = 0; this.events.push([this.n, "free", i]); }
+      }
+      ai() {
+        const a = this.p[1], h = this.p[0], n = this.rn;
+        if (!this.grip) { const ux = h.x - a.x, uy = h.y - a.y, d = Math.sqrt(ux * ux + uy * uy); if (d > 1e-9) { a.dx = ux / d; a.dy = uy / d; } return; }
+        a.dx = 0.0; a.dy = 0.0;
+        if (h.wind > 0) {
+          if (this.seen < 0) this.seen = n;
+          if (n - this.seen === this.react && a.wind === 0 && (this.seen * 7 + 3) % 20 < this.notice) {
+            const c = COUNTER[h.act]; if (a.s >= 6.0) { this.start(1, c); return; } }
+        } else this.seen = -1;
+        if (a.wind === 0) {
+          a.hold = (a.b < 0.35 * a.bmax && a.s > 12.0) ? 1 : 0;
+          if (n % this.every === 0 && a.s >= 6.0 && a.hold === 0) {
+            const cnt = { pull: 0, push: 0, twist: 0 }; for (const x of this.hist) cnt[x] = cnt[x] + 1;
+            let best = "pull"; if (cnt.push > cnt[best]) best = "push"; if (cnt.twist > cnt[best]) best = "twist";
+            let act = this.hist.length >= 3 ? COUNTER[best] : ["pull", "push", "twist"][Math.floor(n / this.every) % 3];
+            if (h.hold === 1) act = "push";
+            this.start(1, act);
+          }
+        }
+      }
+      step(inputs) {
+        const n = this.n, h = this.p[0];
+        for (const ev of inputs) { const k = ev[1];
+          if (k === "d") { h.dx = +ev[2][0]; h.dy = +ev[2][1]; } else if (k === "a") this.start(0, ev[2]);
+          else if (k === "h") h.hold = ev[2] ? 1 : 0; else if (k === "x") this.disengage(0); }
+        if (n % 2 === 0 || this.grip) this.ai();
+        for (let i = 0; i < 2; i++) { const r = this.p[i];
+          if (!this.grip) {
+            const sp = (5.0 + 2.0 * r.agi) * DT; r.x = r.x + r.dx * sp; r.y = r.y + r.dy * sp;
+            const d = Math.sqrt(r.x * r.x + r.y * r.y);
+            if (d > ARENA) { r.x = r.x / d * (ARENA - 0.5); r.y = r.y / d * (ARENA - 0.5);
+              if (i === 0) { r.warn = r.warn + 1; this.events.push([n, "warn", 0]); r.dx = 0.0; r.dy = 0.0; } }
+            r.s = Math.min(r.smax, r.s + 10.0 * DT); r.b = Math.min(r.bmax, r.b + 4.0 * DT);
+          } else {
+            if (r.hold === 1) { r.s = Math.max(0.0, r.s - 6.0 * DT); if (r.s <= 0.0) r.hold = 0; }
+            else if (r.wind === 0) r.s = Math.min(r.smax, r.s + 5.0 * DT);
+            if (r.hit > 40) r.b = Math.min(r.bmax, r.b + 1.5 * DT);
+          }
+          if (r.cd > 0) r.cd = r.cd - 1; if (r.open > 0) r.open = r.open - 1; r.hit = r.hit + 1;
+        }
+        if (!this.grip) { const dx = this.p[1].x - this.p[0].x, dy = this.p[1].y - this.p[0].y;
+          if (dx * dx + dy * dy < GRIP_D * GRIP_D && this.p[0].cd === 0 && this.p[1].cd === 0) { this.grip = true; this.events.push([n, "grip", 0]); } }
+        if (this.grip) {
+          const res = [];
+          for (let i = 0; i < 2; i++) { const r = this.p[i]; if (r.wind > 0) { r.wind = r.wind - 1; if (r.wind === 0) res.push(i); } }
+          for (const i of res) { const a = this.p[i], o = this.p[1 - i]; let m = mult(a.act, o);
+            if (m < 0) { const dmg = 6.0; a.b = Math.max(0.0, a.b - dmg); a.hit = 0; o.adv = o.adv + dmg; this.events.push([n, "counter", 1 - i]); }
+            else { if (o.open > 0) m = m * 1.5;
+              let dmg = 7.0 * a.pow * a.grip * m * (0.5 + 0.5 * a.s / a.smax) - 2.0 * o.stab; if (dmg < 1.0) dmg = 1.0;
+              o.b = Math.max(0.0, o.b - dmg); o.hit = 0; a.adv = a.adv + dmg; this.events.push([n, a.act, i]); }
+            a.act = ""; a.open = OPEN; }
+        }
+        let winner = -2;
+        for (let i = 0; i < 2; i++) if (this.p[i].b <= 0.0) { winner = 1 - i; this.events.push([n, "fall", i]); }
+        if (winner === -2 && this.p[0].warn >= 2) { winner = 1; this.events.push([n, "out", 0]); }
+        this.n = n + 1; this.rn = this.rn + 1;
+        if (winner === -2 && this.rn >= this.roundSteps) {
+          const b0 = this.p[0].b / this.p[0].bmax, b1 = this.p[1].b / this.p[1].bmax;
+          winner = b0 - b1 > 0.05 ? 0 : (b1 - b0 > 0.05 ? 1 : -1); this.events.push([n, "time", winner]); }
+        if (winner !== -2) {
+          if (winner >= 0) this.rounds[winner] = this.rounds[winner] + 1;
+          if (this.rounds[0] >= 2 || this.rounds[1] >= 2 || this.round >= 3) this.over = true;
+          else { this.round = this.round + 1; this.reset(); }
+          this.lastRound = { winner, n };
+        }
+      }
+    }
+    return { Sim, DT, ARENA, WIND, BASE };
+  })();
+  // ================= AUDARYSPAK SIM соңы =================
+  // ================= AUDARYSPAK UI =================
+  const send = (type, data) => window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, data), "*");
+  const $ = (id) => document.getElementById(id);
+  const cs = $("cs").getContext("2d"), cf = $("cf").getContext("2d"), cr = $("cr").getContext("2d");
+  const L = () => (args && args.labels) || {};
+  const setH = () => send("streamlit:setFrameHeight", { height: Math.ceil($("wrap").getBoundingClientRect().height + 8) });
+  let args = null, mode = "idle", run = null, pending = false, joy = { x: 0, y: 0, on: false }, keys = {};
+
+  const COL = {
+    me: { horse: ["#a0612f", "#7a4621", "#4e2b13"], mane: "#1c0f07", hoof: "#2a1a10", blaze: "#f3ece0",
+          robe: "#1d5a8e", robe2: "#123449", dress: "#f2efe8", trim: "#e3b23c", hat: "#7a1b26", fur: "#3b2a1c", tokym: "#1f6f8b", skin: "#d8a578", hair: "#140c08" },
+    op: { horse: ["#2e2a28", "#1d1a18", "#111"], mane: "#0b0b0b", hoof: "#222", blaze: "#efe8dc",
+          robe: "#a51d2a", robe2: "#6e0c1b", dress: "#f2efe8", trim: "#e3b23c", hat: "#2a2a2a", fur: "#2f2318", tokym: "#8e1b2c", skin: "#d8a578", hair: "#140c08" },
+  };
+
+  // ================= GL3D: шағын WebGL қозғалтқышы + ат пен шабандоздың 3D үлгілері =================
+  const G3 = (function () {
+    // ---- геометрия (деректер; әр WebGL контекстке жеке жүктеледі)
+    function sphereD(W, H) {
+      const P = [], N = [], I = [];
+      for (let y = 0; y <= H; y++) { const v = y / H * Math.PI;
+        for (let x = 0; x <= W; x++) { const u = x / W * Math.PI * 2;
+          const px = Math.sin(v) * Math.cos(u), py = Math.cos(v), pz = Math.sin(v) * Math.sin(u);
+          P.push(px, py, pz); N.push(px, py, pz); } }
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const a = y * (W + 1) + x, b = a + W + 1; I.push(a, b, a + 1, b, b + 1, a + 1); }
+      return [P, N, I];
+    }
+    function cylD(S, r0, r1) {
+      const P = [], N = [], I = [];
+      for (let i = 0; i <= S; i++) { const a = i / S * Math.PI * 2, c = Math.cos(a), s = Math.sin(a), ny = (r0 - r1), l = Math.hypot(1, ny);
+        P.push(c * r0, -0.5, s * r0, c * r1, 0.5, s * r1); N.push(c / l, ny / l, s / l, c / l, ny / l, s / l); }
+      for (let i = 0; i < S; i++) { const a = i * 2; I.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+      const base = P.length / 3;
+      P.push(0, 0.5, 0); N.push(0, 1, 0); P.push(0, -0.5, 0); N.push(0, -1, 0);
+      for (let i = 0; i <= S; i++) { const a = i / S * Math.PI * 2; P.push(Math.cos(a) * r1, 0.5, Math.sin(a) * r1); N.push(0, 1, 0); P.push(Math.cos(a) * r0, -0.5, Math.sin(a) * r0); N.push(0, -1, 0); }
+      for (let i = 0; i < S; i++) { const a = base + 2 + i * 2; I.push(base, a + 2, a, base + 1, a + 1, a + 3); }
+      return [P, N, I];
+    }
+    function boxD() {
+      const P = [], N = [], I = [];
+      [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].forEach((n) => {
+        const u = n[0] ? [0, 1, 0] : [1, 0, 0], v = [n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]], b = P.length / 3;
+        [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([a, c]) => { P.push((n[0] + u[0] * a + v[0] * c) / 2, (n[1] + u[1] * a + v[1] * c) / 2, (n[2] + u[2] * a + v[2] * c) / 2); N.push(...n); });
+        I.push(b, b + 1, b + 2, b, b + 2, b + 3); });
+      return [P, N, I];
+    }
+    const GEO = { SPH: sphereD(28, 18), CYL: cylD(18, 1, 1), CONE: cylD(14, 1, 0.02), TAPER: cylD(16, 1, 0.72), BOX: boxD() };
+
+    // ---- матрицалар
+    const I4 = () => new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    function mul(a, b) { const o = new Float32Array(16);
+      for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) { let s = 0; for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k]; o[c * 4 + r] = s; } return o; }
+    const T = (x, y, z) => { const m = I4(); m[12] = x; m[13] = y; m[14] = z; return m; };
+    const Sc = (x, y, z) => { const m = I4(); m[0] = x; m[5] = y; m[10] = z; return m; };
+    const RX = (a) => { const m = I4(), c = Math.cos(a), s = Math.sin(a); m[5] = c; m[6] = s; m[9] = -s; m[10] = c; return m; };
+    const RY = (a) => { const m = I4(), c = Math.cos(a), s = Math.sin(a); m[0] = c; m[2] = -s; m[8] = s; m[10] = c; return m; };
+    const RZ = (a) => { const m = I4(), c = Math.cos(a), s = Math.sin(a); m[0] = c; m[1] = s; m[4] = -s; m[5] = c; return m; };
+    function persp(f, a, n, fa) { const t = 1 / Math.tan(f / 2), m = new Float32Array(16);
+      m[0] = t / a; m[5] = t; m[10] = (fa + n) / (n - fa); m[11] = -1; m[14] = 2 * fa * n / (n - fa); return m; }
+    function look(e, t, u) {
+      let z = [e[0] - t[0], e[1] - t[1], e[2] - t[2]]; let l = Math.hypot(...z); z = z.map((v) => v / l);
+      let x = [u[1] * z[2] - u[2] * z[1], u[2] * z[0] - u[0] * z[2], u[0] * z[1] - u[1] * z[0]]; l = Math.hypot(...x); x = x.map((v) => v / l);
+      const y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
+      return new Float32Array([x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0,
+        -(x[0] * e[0] + x[1] * e[1] + x[2] * e[2]), -(y[0] * e[0] + y[1] * e[1] + y[2] * e[2]), -(z[0] * e[0] + z[1] * e[1] + z[2] * e[2]), 1]);
+    }
+    function alignY(d) {
+      const l = Math.hypot(...d), v = d.map((x) => x / l), s = Math.hypot(v[2], v[0]), c = v[1];
+      if (s < 1e-6) return c > 0 ? I4() : RX(Math.PI);
+      const k = [v[2] / s, 0, -v[0] / s], t = 1 - c, m = I4();
+      const K = [[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]];
+      for (let r = 0; r < 3; r++) for (let cc = 0; cc < 3; cc++) m[cc * 4 + r] = (r === cc ? c : 0) + s * K[r][cc] + t * k[r] * k[cc];
+      return m;
+    }
+
+    // ---- сахнаны бір рет жазу, барлық камерада салу
+    let REC = [];
+    function draw(key, M, col, spec, alpha) { REC.push([key, M, col, spec, alpha]); }
+    function P(m, key, t, r, s, col, spec, alpha) {
+      let M = mul(m, T(t[0], t[1], t[2]));
+      if (r) { if (r[2]) M = mul(M, RZ(r[2])); if (r[1]) M = mul(M, RY(r[1])); if (r[0]) M = mul(M, RX(r[0])); }
+      draw(key, mul(M, Sc(s[0], s[1], s[2])), col, spec, alpha);
+    }
+    function seg(m, a, b, r0, col, key, spec) {
+      const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], l = Math.hypot(...d);
+      let M = mul(m, T((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2)); M = mul(M, alignY(d));
+      if (key === "SPH") draw(key, mul(M, Sc(r0, l * 0.95, r0)), col, spec);
+      else draw(key || "CYL", mul(M, Sc(r0, l, r0)), col, spec);
+    }
+    function record(fn) { REC = []; fn(); const r = REC; REC = []; return r; }
+
+    const VS = `attribute vec3 p; attribute vec3 n; attribute vec4 m0; attribute vec4 m1; attribute vec4 m2; attribute vec4 m3; attribute vec4 ic; attribute float ia;
+      uniform mat4 VP; varying vec3 vN; varying vec3 vW; varying vec4 vC; varying float vA;
+      void main(){ mat4 M = mat4(m0, m1, m2, m3); vec4 w = M * vec4(p, 1.0); vW = w.xyz; vN = mat3(M) * n; vC = ic; vA = ia; gl_Position = VP * w; }`;
+    const FS = `precision mediump float; varying vec3 vN; varying vec3 vW; varying vec4 vC; varying float vA;
+      uniform vec3 L; uniform vec3 E; uniform vec3 F; uniform vec2 FR;
+      void main(){
+        vec3 n = normalize(vN); if (!gl_FrontFacing) n = -n;
+        float d = max(dot(n, L), 0.0); float h = 0.5 + 0.5 * n.y;
+        vec3 amb = mix(vec3(0.40, 0.33, 0.24), vec3(0.60, 0.68, 0.80), h) * 0.62;
+        vec3 v = normalize(E - vW); vec3 r = reflect(-L, n);
+        float sp = pow(max(dot(r, v), 0.0), 20.0) * vC.a;
+        float rim = pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.09;
+        vec3 col = vC.rgb * (amb + d * vec3(1.0, 0.95, 0.86) * 0.82) + sp + rim * vec3(1.0, 0.95, 0.85);
+        float f = clamp((length(E - vW) - FR.x) / (FR.y - FR.x), 0.0, 1.0);
+        gl_FragColor = vec4(mix(col, F, f * f), vA);
+      }`;
+
+    // ---- бір камера = бір WebGL кенеп
+    function makeView(cv, bw, bh) {
+      let gl = null;
+      try { gl = cv.getContext("webgl", { antialias: true, alpha: true, premultipliedAlpha: false }); } catch (e) { gl = null; }
+      if (!gl) return null;
+      const EXT = gl.getExtension("ANGLE_instanced_arrays");
+      if (!EXT) return null;
+      const sh = (t, src) => { const s = gl.createShader(t); gl.shaderSource(s, src); gl.compileShader(s); return s; };
+      const pr = gl.createProgram();
+      gl.attachShader(pr, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, FS)); gl.linkProgram(pr);
+      if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) return null;
+      gl.useProgram(pr);
+      const U = {}; ["VP", "L", "E", "F", "FR"].forEach((k) => U[k] = gl.getUniformLocation(pr, k));
+      const A = {}; ["p", "n", "m0", "m1", "m2", "m3", "ic", "ia"].forEach((k) => A[k] = gl.getAttribLocation(pr, k));
+      const meshes = {};
+      Object.entries(GEO).forEach(([key, [Pp, Nn, Ii]]) => {
+        const b = (d, t) => { const x = gl.createBuffer(); gl.bindBuffer(t, x); gl.bufferData(t, d, gl.STATIC_DRAW); return x; };
+        meshes[key] = { p: b(new Float32Array(Pp), gl.ARRAY_BUFFER), n: b(new Float32Array(Nn), gl.ARRAY_BUFFER), i: b(new Uint16Array(Ii), gl.ELEMENT_ARRAY_BUFFER), c: Ii.length };
+      });
+      const ibuf = gl.createBuffer();
+      gl.enable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      let VPm = I4(), w = bw, h = bh, q = 1;
+      const view = {
+        setQuality(nq) { q = nq; cv.width = Math.round(bw * q); cv.height = Math.round(bh * q); },
+        camera(eye, target, fov, fog) {
+          VPm = mul(persp(fov || 0.7, bw / bh, 0.1, 400), look(eye, target, [0, 1, 0]));
+          gl.viewport(0, 0, cv.width, cv.height);
+          gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+          const L = [0.45, 0.8, 0.35], ll = Math.hypot(...L);
+          gl.uniformMatrix4fv(U.VP, false, VPm); gl.uniform3fv(U.L, L.map((v) => v / ll)); gl.uniform3fv(U.E, eye);
+          gl.uniform3fv(U.F, fog || [0.84, 0.9, 0.93]); gl.uniform2fv(U.FR, [25, 170]);
+        },
+        project(p) {
+          const V = VPm, x = V[0] * p[0] + V[4] * p[1] + V[8] * p[2] + V[12], y = V[1] * p[0] + V[5] * p[1] + V[9] * p[2] + V[13];
+          const ww = V[3] * p[0] + V[7] * p[1] + V[11] * p[2] + V[15];
+          if (ww <= 0.01) return null; return [(x / ww * 0.5 + 0.5) * bw, (1 - (y / ww * 0.5 + 0.5)) * bh];
+        },
+        draw(list) {
+          const batch = (key, items) => {
+            const msh = meshes[key], n = items.length, data = new Float32Array(n * 21);
+            for (let i = 0; i < n; i++) { const d = items[i], o = i * 21; data.set(d[1], o);
+              data[o + 16] = d[2][0]; data[o + 17] = d[2][1]; data[o + 18] = d[2][2]; data[o + 19] = d[3] || 0.06; data[o + 20] = d[4] == null ? 1 : d[4]; }
+            gl.bindBuffer(gl.ARRAY_BUFFER, ibuf); gl.bufferData(gl.ARRAY_BUFFER, data, gl.STREAM_DRAW);
+            const st = 84;
+            ["m0", "m1", "m2", "m3"].forEach((k, j) => { gl.enableVertexAttribArray(A[k]); gl.vertexAttribPointer(A[k], 4, gl.FLOAT, false, st, j * 16); EXT.vertexAttribDivisorANGLE(A[k], 1); });
+            gl.enableVertexAttribArray(A.ic); gl.vertexAttribPointer(A.ic, 4, gl.FLOAT, false, st, 64); EXT.vertexAttribDivisorANGLE(A.ic, 1);
+            gl.enableVertexAttribArray(A.ia); gl.vertexAttribPointer(A.ia, 1, gl.FLOAT, false, st, 80); EXT.vertexAttribDivisorANGLE(A.ia, 1);
+            gl.bindBuffer(gl.ARRAY_BUFFER, msh.p); gl.enableVertexAttribArray(A.p); gl.vertexAttribPointer(A.p, 3, gl.FLOAT, false, 0, 0);
+            gl.bindBuffer(gl.ARRAY_BUFFER, msh.n); gl.enableVertexAttribArray(A.n); gl.vertexAttribPointer(A.n, 3, gl.FLOAT, false, 0, 0);
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, msh.i);
+            EXT.drawElementsInstancedANGLE(gl.TRIANGLES, msh.c, gl.UNSIGNED_SHORT, 0, n);
+          };
+          const groups = {}, alpha = {};
+          for (const d of list) { const tgt = (d[4] != null && d[4] < 1) ? alpha : groups; (tgt[d[0]] = tgt[d[0]] || []).push(d); }
+          Object.keys(groups).forEach((k) => batch(k, groups[k]));
+          gl.depthMask(false); Object.keys(alpha).forEach((k) => batch(k, alpha[k])); gl.depthMask(true);
+        },
+      };
+      return view;
+    }
+    return { SPH: "SPH", CYL: "CYL", CONE: "CONE", TAPER: "TAPER", BOX: "BOX", I4, mul, T, Sc, RX, RY, RZ, P, seg, record, makeView };
+  })();
+
+  const hex = (h) => [parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255];
+
+  // ---- 3D ат: m — аттың түбі (жерде), +x алға қарайды
+  function horse3d(m, k, ph, opts) {
+    const { P, seg, SPH, CYL, CONE, TAPER, BOX, mul, T, RZ } = G3;
+    const c0 = hex(k.horse[0]), c1 = hex(k.horse[1]), c2 = hex(k.horse[2]), mane = hex(k.mane), hoof = hex(k.hoof);
+    const bob = Math.sin(ph * 2) * 0.06, pitch = Math.sin(ph * 2 + 0.6) * 0.05;
+    const mb = mul(mul(m, T(0, bob, 0)), RZ(pitch));
+    // көлеңке
+    P(m, SPH, [0, 0.02, 0], null, [1.25, 0.01, 0.45], [0.18, 0.15, 0.08], 0, 0.35);
+    // дене
+    P(mb, SPH, [0, 1.26, 0], null, [0.9, 0.37, 0.33], c0, 0.08);
+    P(mb, SPH, [-0.6, 1.3, 0], [0, 0, 0.1], [0.46, 0.41, 0.35], c0, 0.08);
+    P(mb, SPH, [0.6, 1.25, 0], [0, 0, -0.2], [0.42, 0.44, 0.32], c0, 0.08);
+    P(mb, SPH, [0.0, 1.08, 0], null, [0.72, 0.2, 0.28], c1, 0.04);
+    [-1, 1].forEach((sd) => {   // иық пен сан бұлшықеттері
+      P(mb, SPH, [0.52, 1.16, sd * 0.15], [0, 0, -0.35], [0.3, 0.36, 0.18], c0, 0.08);
+      P(mb, SPH, [-0.62, 1.18, sd * 0.15], [0, 0, 0.25], [0.36, 0.4, 0.2], c0, 0.08); });
+    // мойын мен бас
+    const nk = Math.sin(ph * 2) * 0.06;
+    P(mb, SPH, [0.8, 1.48, 0], [0, 0, 0.7], [0.36, 0.3, 0.22], c0, 0.08);
+    P(mb, SPH, [1.0, 1.68, 0], [0, 0, 0.95 + nk], [0.5, 0.25, 0.18], c0, 0.08);
+    const mh = mul(mul(mb, T(1.3, 2.02 + nk * 0.3, 0)), RZ(-1.05 + nk));
+    P(mh, SPH, [0.2, 0, 0], null, [0.33, 0.15, 0.13], c0, 0.12);
+    P(mh, SPH, [0.47, -0.02, 0], null, [0.14, 0.12, 0.11], c1, 0.08);
+    if (k.blaze) P(mh, SPH, [0.28, 0.1, 0], null, [0.24, 0.06, 0.05], hex(k.blaze), 0.05);
+    [-1, 1].forEach((sd) => {
+      P(mh, CONE, [-0.02, 0.17, sd * 0.06], [sd * 0.15, 0, 0.35], [0.045, 0.14, 0.04], c1);
+      P(mh, SPH, [0.13, 0.07, sd * 0.11], null, [0.03, 0.03, 0.02], [0.05, 0.04, 0.03], 0.6);
+      P(mh, SPH, [0.56, -0.02, sd * 0.06], null, [0.02, 0.02, 0.02], [0.1, 0.07, 0.05]);
+      // жүген
+      P(mh, BOX, [0.3, 0.0, sd * 0.135], [0, 0, 0.1], [0.42, 0.025, 0.01], [0.35, 0.1, 0.07]);
+      P(mh, SPH, [0.3, 0.0, sd * 0.14], null, [0.022, 0.022, 0.01], hex(k.trim), 0.9);
+    });
+    // жал
+    for (let i = 0; i < 8; i++) { const t = i / 7;
+      P(mb, BOX, [0.74 + t * 0.52, 1.62 + t * 0.44 + 0.1, 0], [0, 0, 0.85 + Math.sin(ph * 2 + i) * 0.08], [0.09, 0.17, 0.05], mane); }
+    // құйрық
+    let tp = [-1.02, 1.48, 0];
+    for (let i = 0; i < 7; i++) { const a = -0.55 - i * 0.16 + Math.sin(ph * 2 + i * 0.6) * 0.14;
+      const np = [tp[0] - 0.12 * Math.cos(a) - 0.05, tp[1] + 0.12 * Math.sin(a), Math.sin(ph + i * 0.8) * 0.05];
+      seg(mb, tp, np, 0.1 - i * 0.006, mane, SPH); tp = np; }
+    // аяқтар (галоп)
+    const leg = (hip, a1, a2, l1, l2, r1, r2, col) => {
+      const m1 = mul(mul(mb, T(hip[0], hip[1], hip[2])), RZ(a1));
+      P(m1, SPH, [0, -0.04, 0], null, [r1 * 1.25, r1 * 1.5, r1 * 1.15], col, 0.06);
+      P(m1, SPH, [0, -l1 / 2 + 0.02, 0], null, [r1, l1 / 2 + 0.06, r1 * 0.85], col, 0.06);
+      const m2 = mul(mul(m1, T(0, -l1, 0)), RZ(a2));
+      P(m2, SPH, [0, 0, 0], null, [r2 * 1.1, r2 * 1.1, r2 * 1.1], col);
+      P(m2, CYL, [0, -l2 / 2, 0], null, [r2, l2, r2], col, 0.08);
+      P(m2, SPH, [0, -l2, 0], null, [r2 * 1.15, r2, r2 * 1.15], col);
+      P(m2, CYL, [0.02, -l2 - 0.07, 0], null, [r2 * 1.35, 0.1, r2 * 1.35], hoof, 0.2);
+    };
+    [[1, 0, c2, -0.18], [-1, 0.9, c1, 0.18]].forEach(([sd, o, col, z]) => {
+      const hp = ph + o, fp = ph + 2.2 + o;
+      leg([-0.66, 1.18, z], 0.12 + 0.5 * Math.sin(hp), -(0.45 + 0.5 * Math.max(0, Math.sin(hp + 1.4))), 0.56, 0.58, 0.15, 0.062, col);
+      leg([0.6, 1.08, z], 0.05 + 0.6 * Math.sin(fp), -(0.1 + 1.1 * Math.max(0, Math.sin(fp + 1.6))), 0.5, 0.56, 0.125, 0.058, col);
+    });
+    // тоқым, ер
+    const tk = hex(k.tokym), tr = hex(k.trim);
+    P(mb, BOX, [0, 1.63, 0], null, [0.66, 0.04, 0.74], tk);
+    [-1, 1].forEach((sd) => { P(mb, BOX, [0, 1.42, sd * 0.37], [sd * 0.08, 0, 0], [0.62, 0.42, 0.025], tk);
+      P(mb, BOX, [0, 1.21, sd * 0.385], [sd * 0.08, 0, 0], [0.64, 0.05, 0.03], tr, 0.6);
+      for (let i = 0; i < 5; i++) P(mb, SPH, [-0.24 + i * 0.12, 1.32, sd * 0.392], null, [0.025, 0.025, 0.01], tr, 0.8); });
+    P(mb, BOX, [0, 1.7, 0], null, [0.46, 0.1, 0.44], [0.33, 0.17, 0.07], 0.2);
+    P(mb, SPH, [0.22, 1.77, 0], null, [0.06, 0.07, 0.06], tr, 0.8);
+    return mb;
+  }
+
+  // ---- 3D шабандоз: m — ердің үстіндегі нүкте. role: girl | jigit | jigit2
+  function rider3d(mh, k, role, ph, lean, leanSide, whipUp) {
+    const { P, seg, SPH, CYL, CONE, TAPER, BOX, mul, T, RX, RZ } = G3;
+    const coat = hex(role === "girl" ? k.robe : k.robe), dress = hex(k.dress), skin = hex(k.skin), hair = hex(k.hair),
+      trim = hex(k.trim), boot = [0.1, 0.07, 0.05], robe2 = hex(k.robe2);
+    const bounce = Math.sin(ph * 2 + 0.4) * 0.03;
+    const mr = mul(mul(mh, T(0.02, 1.76 + bounce, 0)), RX((lean || 0) * (leanSide || 0) * 0.95));
+    // аяқтар
+    [-1, 1].forEach((sd) => {
+      const hip = [0, 0, sd * 0.13], knee = [0.3, -0.16, sd * 0.36], ank = [0.2, -0.56, sd * 0.38];
+      seg(mr, hip, knee, 0.095, role === "girl" ? dress : robe2);
+      seg(mr, knee, ank, 0.065, boot); P(mr, BOX, [ank[0] + 0.06, ank[1] - 0.03, ank[2]], null, [0.2, 0.07, 0.08], boot);
+      P(mr, CYL, [ank[0] + 0.04, ank[1] - 0.05, ank[2]], [0, 0, 0], [0.07, 0.015, 0.07], trim, 0.8);
+    });
+    // етек / шапан
+    const sw = Math.sin(ph * 1.7) * 0.12;
+    if (role === "girl") P(mr, CONE, [-0.08, -0.08, 0], [0, 0, 0.45 + sw * 0.5], [0.34, 0.42, 0.36], dress, 0.05);
+    else P(mr, CONE, [-0.1, -0.05, 0], [0, 0, 0.55 + sw * 0.5], [0.3, 0.38, 0.33], robe2, 0.05);
+    // дене (алға еңкейген)
+    const mt = mul(mr, RZ(-0.38));
+    P(mt, SPH, [0, 0.3, 0], null, [0.19, 0.33, 0.22], role === "girl" ? dress : coat, 0.06);
+    P(mt, SPH, [0, 0.5, 0], null, [0.16, 0.12, 0.25], role === "girl" ? dress : coat, 0.06);
+    if (role === "girl") {
+      P(mt, SPH, [0.005, 0.3, 0], null, [0.195, 0.31, 0.225], coat, 0.18);           // барқыт камзол
+      for (let i = 0; i < 4; i++) P(mt, SPH, [0.17, 0.12 + i * 0.1, 0], null, [0.018, 0.018, 0.018], trim, 0.9);
+      P(mt, BOX, [0.16, 0.3, 0], [0, 0, 0.05], [0.01, 0.5, 0.02], trim, 0.7);
+    } else {
+      P(mt, CYL, [0, 0.12, 0], null, [0.185, 0.06, 0.215], trim, 0.7);               // белбеу
+      P(mt, BOX, [0.165, 0.52, 0], null, [0.02, 0.12, 0.08], dress);                  // жаға
+    }
+    // қолдар: тізгінге
+    const sh = (sd) => [0.0, 0.55, sd * 0.23];
+    [-1, 1].forEach((sd) => {
+      const up = role !== "girl" && sd === 1 && whipUp && !lean;
+      const reach = lean && sd === leanSide;
+      let el, hd;
+      if (reach) { el = [0.22, 0.2, sd * 0.38]; hd = [0.28, -0.32, sd * 0.5]; }
+      else if (up) { el = [0.02, 0.84, 0.3]; hd = [0.1, 1.08, 0.32]; }
+      else { el = [0.22, 0.35, sd * 0.25]; hd = [0.46, 0.18, sd * 0.12]; }
+      seg(mt, sh(sd), el, 0.072, role === "girl" ? dress : coat);
+      P(mt, SPH, el, null, [0.068, 0.068, 0.068], role === "girl" ? dress : coat);
+      seg(mt, el, hd, 0.06, role === "girl" ? dress : coat);
+      P(mt, SPH, hd, null, [0.045, 0.045, 0.045], skin);
+      if (up) { const wa = Math.sin(ph * 2) * 0.3;
+        seg(mt, hd, [-0.15, 1.35, 0.36], 0.012, [0.3, 0.17, 0.07]);
+        seg(mt, [-0.15, 1.35, 0.36], [-0.45 + wa * 0.3, 1.25 + wa * 0.4, 0.38], 0.006, [0.25, 0.14, 0.06]); }
+    });
+    // бас
+    P(mt, CYL, [0, 0.64, 0], null, [0.05, 0.08, 0.05], skin);
+    P(mt, SPH, [0.02, 0.78, 0], null, [0.115, 0.13, 0.11], skin, 0.08);
+    P(mt, SPH, [0.115, 0.79, 0.04], null, [0.012, 0.012, 0.012], [0.05, 0.04, 0.03]);
+    P(mt, SPH, [0.115, 0.79, -0.04], null, [0.012, 0.012, 0.012], [0.05, 0.04, 0.03]);
+    P(mt, SPH, [0.122, 0.75, 0], null, [0.018, 0.022, 0.016], skin);
+    if (role === "girl") {
+      P(mt, SPH, [-0.01, 0.8, 0], null, [0.108, 0.1, 0.105], hair);                   // шаш
+      P(mt, CYL, [0.0, 0.86, 0], null, [0.125, 0.045, 0.125], [0.97, 0.95, 0.9], 0.05); // үкілі бөріктің жиегі
+      P(mt, CYL, [0.0, 0.94, 0], null, [0.1, 0.13, 0.1], coat, 0.3);
+      P(mt, SPH, [0.0, 1.01, 0], null, [0.1, 0.03, 0.1], coat, 0.3);
+      P(mt, SPH, [0.0, 1.03, 0], null, [0.022, 0.022, 0.022], trim, 0.9);
+      for (let f = -1; f <= 1; f++) seg(mt, [0, 1.03, 0], [-0.12 + f * 0.02, 1.25 + Math.sin(ph + f) * 0.02, f * 0.06], 0.012, [0.98, 0.97, 0.94], CONE);
+      [-1, 1].forEach((sd) => { let p0 = [-0.08, 0.76, sd * 0.06];          // бұрымдар
+        for (let i = 0; i < 6; i++) { const p1 = [p0[0] - 0.07 - i * 0.01, p0[1] - 0.06 + Math.sin(ph * 2 + i + sd) * 0.015, p0[2] + sd * 0.008];
+          seg(mt, p0, p1, 0.025 - i * 0.002, hair); p0 = p1; }
+        P(mt, SPH, p0, null, [0.022, 0.022, 0.022], trim, 0.9); });
+      P(mt, SPH, [0.02, 0.7, 0.1], null, [0.012, 0.012, 0.012], trim, 0.9);
+    } else {
+      P(mt, BOX, [0.12, 0.72, 0], null, [0.01, 0.012, 0.08], hair);                   // мұрт
+      P(mt, SPH, [0.0, 0.88, 0], null, [0.14, 0.09, 0.14], hex(k.fur), 0.02);        // тымақ
+      P(mt, CYL, [0.0, 0.95, 0], null, [0.09, 0.08, 0.09], hex(k.hat), 0.2);
+      P(mt, SPH, [0.0, 1.0, 0], null, [0.025, 0.025, 0.025], trim, 0.9);
+      [-1, 1].forEach((sd) => P(mt, BOX, [-0.03, 0.78, sd * 0.12], [sd * 0.2, 0, 0], [0.08, 0.14, 0.03], hex(k.fur), 0.02));
+      P(mt, BOX, [-0.11, 0.8, 0], [0, 0, -0.25], [0.04, 0.16, 0.18], hex(k.fur), 0.02);
+    }
+    // тізгін
+    [-1, 1].forEach((sd) => seg(mh, [0.62, 1.95 + bounce, sd * 0.1], [1.42, 1.8, sd * 0.12], 0.008, [0.2, 0.1, 0.05]));
+  }
+
+  // ---- ортақ көрініс бөлшектері
+  function ground3d(cx, opts) {
+    const { P, CYL, CONE, BOX, I4 } = G3, m = I4();
+    P(m, BOX, [cx, -0.05, 0], null, [420, 0.1, 160], [0.72, 0.68, 0.36]);
+    P(m, BOX, [cx, 0.005, 0], null, [420, 0.01, opts.trackW || 4.2], [0.6, 0.5, 0.32]);
+    // шөп шоқтары
+    const base = Math.floor(cx / 6) * 6;
+    for (let x = base - 48; x < base + 90; x += 9) for (let j = 0; j < 3; j++) {
+      const r = Math.sin(x * 12.9898 + j * 78.233) * 43758.5453, f = r - Math.floor(r);
+      const z = (j === 0 ? -1 : 1) * (3 + f * 20), xx = x + f * 7;
+      P(m, CONE, [xx, 0.18, z], null, [0.18 + f * 0.1, 0.36, 0.18], [0.45 + f * 0.1, 0.5, 0.2]);
+    }
+  }
+  function post3d(x, z, col) { const { P, CYL, I4 } = G3; P(I4(), CYL, [x, 0.5, z], null, [0.05, 1.0, 0.05], col || [0.96, 0.96, 0.94], 0.2); }
+  function flag3d(x, z) { const { P, CYL, BOX, SPH, I4 } = G3, m = I4();
+    P(m, CYL, [x, 1.6, z], null, [0.06, 3.2, 0.06], [0.42, 0.27, 0.14]);
+    P(m, BOX, [x + 0.55, 2.8, z], null, [1.0, 0.6, 0.03], [0.96, 0.69, 0.25], 0.2);
+    P(m, SPH, [x, 3.25, z], null, [0.1, 0.1, 0.1], [0.9, 0.75, 0.2], 0.9); }
+  function sky2d(ctx, w, h, hy, scroll) {
+    const g = ctx.createLinearGradient(0, 0, 0, Math.max(10, hy));
+    g.addColorStop(0, "#4f9fe3"); g.addColorStop(1, "#d6ecf7");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = "#8193ab"; ctx.beginPath(); ctx.moveTo(0, hy);
+    for (let x = 0; x <= w; x += 24) ctx.lineTo(x, hy - 18 * Math.abs(Math.sin((x + scroll) / 70)) - 10 * Math.abs(Math.sin((x + scroll) / 23)) - 4);
+    ctx.lineTo(w, hy + 1); ctx.lineTo(0, hy + 1); ctx.fill();
+    ctx.fillStyle = "#d6e6e8"; ctx.fillRect(0, hy, w, h - hy);
+  }
+  // Бейімделгіш сапа: баяу құрылғыда ажыратымдылықты төмендетеді
+  const PERF = { t: 0, n: 0, q: 1 };
+  function perfTick(ms, views) {
+    PERF.t += ms; PERF.n += 1;
+    if (PERF.n >= 20) { const avg = PERF.t / PERF.n; PERF.t = 0; PERF.n = 0;
+      let q = PERF.q; if (avg > 40 && q > 0.5) q = Math.max(0.5, q - 0.25); else if (avg < 14 && q < 1) q = Math.min(1, q + 0.25);
+      if (q !== PERF.q) { PERF.q = q; views.forEach((v) => v.setQuality(q)); } }
+  }
+  function view3d(ctx, view, w, h, eye, target, fov, list, scroll) {
+    view.camera(eye, target, fov, [0.84, 0.9, 0.93]);
+    const dx = target[0] - eye[0], dz = target[2] - eye[2], l = Math.hypot(dx, dz) || 1;
+    const hp = view.project([eye[0] + dx / l * 2000, 0, eye[2] + dz / l * 2000]);
+    sky2d(ctx, w, h, hp ? Math.max(0, Math.min(h, hp[1])) : h * 0.45, scroll || 0);
+    view.draw(list);
+  }
+  function label3d(ctx, view, p, txt) { const q = view.project(p); if (q && q[0] > -30 && q[0] < 640) {
+    ctx.font = "bold 12px system-ui"; ctx.fillStyle = "#fff"; ctx.strokeStyle = "rgba(0,0,0,.55)"; ctx.lineWidth = 3;
+    ctx.strokeText(txt, q[0] + 4, q[1]); ctx.fillText(txt, q[0] + 4, q[1]); } }
+  // 3D камералары: әр көрініске жеке WebGL кенеп (2D кенептің үстінде)
+  function setup3d() {
+    const mk = (id, w, h) => { const host = document.getElementById(id).parentElement, c = document.createElement("canvas");
+      c.width = w; c.height = h; c.className = "gl3d"; host.insertBefore(c, host.children[1]); return c; };
+    const gs = mk("cs", 600, 300), gf = mk("cf", 360, 300), gr = mk("cr", 360, 300);
+    const lab = document.createElement("canvas"); lab.width = 600; lab.height = 300; lab.className = "gl3d"; gs.after(lab);
+    const V = { s: G3.makeView(gs, 600, 300), f: G3.makeView(gf, 360, 300), r: G3.makeView(gr, 360, 300), lab: lab.getContext("2d") };
+    if (!V.s || !V.f || !V.r) { [gs, gf, gr, lab].forEach((c) => c.remove()); return null; }
+    return V;
+  }
+  // ================= GL3D соңы =================
+
+  const V3 = setup3d();
+  const ACT_NAME = () => ({ pull: L().pull, push: L().push, twist: L().twist });
+
+  // ---- шабандоздардың көріністегі орны мен бағыты
+  function poses(sim, t, fall) {
+    const a = sim.p[0], b = sim.p[1];
+    if (sim.grip) {
+      const mx = (a.x + b.x) / 2, mz = (a.y + b.y) / 2, th = t * 0.35, hx = Math.cos(th), hz = Math.sin(th);
+      const px = -hz, pz = hx;   // оң жақ (+z) векторы
+      return [{ x: mx - px * 0.8, z: mz - pz * 0.8, hx, hz, side: 1 }, { x: mx + px * 0.8, z: mz + pz * 0.8, hx, hz, side: -1 }];
+    }
+    const dx = b.x - a.x, dz = b.y - a.y, d = Math.hypot(dx, dz) || 1;
+    return [{ x: a.x, z: a.y, hx: dx / d, hz: dz / d, side: 1 }, { x: b.x, z: b.y, hx: -dx / d, hz: -dz / d, side: 1 }];
+  }
+
+  function arenaScene(sim, t, phases, fall) {
+    const { P, CYL, SPH, BOX, CONE, I4 } = G3, m = I4();
+    P(m, BOX, [0, -0.05, 0], null, [300, 0.1, 300], [0.66, 0.66, 0.34]);
+    P(m, CYL, [0, 0.01, 0], null, [A.ARENA, 0.02, A.ARENA], [0.78, 0.66, 0.45]);
+    for (let k = 0; k < 36; k++) { const ang = k / 36 * 6.2832, x = Math.cos(ang) * A.ARENA, z = Math.sin(ang) * A.ARENA;
+      P(m, CYL, [x, 0.5, z], null, [0.06, 1.0, 0.06], [0.42, 0.27, 0.14]);
+      P(m, SPH, [x, 1.0, z], null, [0.09, 0.09, 0.09], k % 2 ? [0.75, 0.15, 0.2] : [0.95, 0.85, 0.3], 0.5); }
+    for (let k = 0; k < 9; k++) { const ang = k / 9 * 6.2832 + 0.3, x = Math.cos(ang) * 34, z = Math.sin(ang) * 34;
+      P(m, CYL, [x, 1.0, z], null, [3.2, 2.0, 3.2], [0.95, 0.93, 0.88], 0.02);
+      P(m, CONE, [x, 2.8, z], null, [3.4, 1.6, 3.4], [0.92, 0.9, 0.84], 0.02);
+      P(m, CYL, [x, 3.7, z], null, [0.5, 0.15, 0.5], [0.75, 0.15, 0.2], 0.1); }
+    const ps = poses(sim, t, fall);
+    ps.forEach((q, i) => {
+      const r = sim.p[i], k = COL[i === 0 ? "me" : "op"], ang = Math.atan2(-q.hz, q.hx);
+      const mm = G3.mul(G3.T(q.x, 0, q.z), G3.RY(ang));
+      const ph = phases[i] + (sim.grip ? t * 3 : 0);
+      const mh = horse3d(mm, k, ph);
+      let lean = 0, side = q.side;
+      if (sim.grip) {
+        lean = 0.18 + (1 - r.b / r.bmax) * 0.55;
+        if (r.wind > 0) lean += r.act === "pull" ? -0.12 : r.act === "push" ? 0.22 : 0.12;
+        if (r.hold === 1) lean *= 0.5;
+      }
+      if (fall && fall.who === i) { const f = Math.min(1, fall.t / 1.2); lean = 0.4 + f * 1.25; side = q.side * (sim.grip ? -1 : 1); }
+      rider3d(mh, k, "jigit", ph, Math.max(0, lean), side, false);
+      if (i === 0) P(mh, CONE, [0.0, 3.25 + Math.sin(t * 4) * 0.1, 0], [0, 0, 3.1416], [0.18, 0.35, 0.18], [0.97, 0.78, 0.2], 0.6);
+      if (!sim.grip && r.dx * r.dx + r.dy * r.dy > 0.01) for (let d = 0; d < 3; d++) {   // шаң
+        const f = ((t * 2 + d * 0.33 + i * 0.5) % 1); P(m, SPH, [q.x - q.hx * (0.8 + f * 1.2), 0.15 + f * 0.4, q.z - q.hz * (0.8 + f * 1.2)], null, [0.25 + f * 0.4, 0.2 + f * 0.3, 0.25 + f * 0.4], [0.8, 0.7, 0.55], 0, 0.45 * (1 - f)); }
+    });
+    return ps;
+  }
+
+  function render(sim, t, phases, fall) {
+    const list = G3.record(() => { G3.__ps = arenaScene(sim, t, phases, fall); });
+    const ps = G3.__ps, me = ps[0], op = ps[1];
+    const bob = Math.sin(phases[0] * 2) * 0.06 + (sim.grip ? Math.sin(t * 9) * (1 - sim.p[0].b / sim.p[0].bmax) * 0.08 : 0);
+    if (V3) {
+      const mx = (me.x + op.x) / 2, mz = (me.z + op.z) / 2, ax = op.x - me.x, az = op.z - me.z, al = Math.hypot(ax, az) || 1;
+      let nx = -az / al, nz = ax / al; if (sim.grip) { nx = me.hx; nz = me.hz; }
+      const sd = sim.grip ? 9 : Math.max(10, al * 0.8 + 6);
+      view3d(cs, V3.s, 600, 300, [mx + nx * sd, 3.2, mz + nz * sd], [mx, 1.6, mz], 0.62, list, mx * 6);
+      V3.lab.clearRect(0, 0, 600, 300);
+      // алдынан: ойыншының бетіне
+      view3d(cf, V3.f, 360, 300, [me.x + me.hx * 5.2 + (sim.grip ? -me.hz * 1.4 : 0), 2.3 + bob, me.z + me.hz * 5.2 + (sim.grip ? me.hx * 1.4 : 0)], [me.x, 2.0, me.z], 0.8, list, me.x * 4);
+      // артынан: иықтың үстінен қарсыласқа
+      const tx = sim.grip ? op.x : op.x, tz = sim.grip ? op.z : op.z;
+      const bx = me.x - (sim.grip ? me.hx * 4.5 + (op.x - me.x) * 0.9 : ax / al * 5.5), bz = me.z - (sim.grip ? me.hz * 4.5 + (op.z - me.z) * 0.9 : az / al * 5.5);
+      view3d(cr, V3.r, 360, 300, [bx, 3.0 + bob, bz], [tx, 1.8, tz], 0.8, list, me.x * 4);
+    } else {
+      [cs, cf, cr].forEach((c, k) => { const w = k ? 360 : 600; c.fillStyle = "#c7a46a"; c.fillRect(0, 0, w, 300);
+        const sc = 300 / 44; c.save(); c.translate(w / 2, 150); c.strokeStyle = "#7a4419"; c.beginPath(); c.arc(0, 0, A.ARENA * sc, 0, 7); c.stroke();
+        sim.p.forEach((r, i) => { c.fillStyle = i ? "#c0392b" : "#2e86de"; c.beginPath(); c.arc(r.x * sc, r.y * sc, 10, 0, 7); c.fill(); }); c.restore(); });
+    }
+    $("ls").textContent = L().side || ""; $("lf").textContent = L().front || ""; $("lr").textContent = L().rear || "";
+  }
+
+  function hud(sim) {
+    const me = sim.p[0], op = sim.p[1], left = Math.max(0, (sim.roundSteps - sim.rn) * A.DT);
+    const bar = (v, mx, c) => `<div class="meter"><i style="width:${Math.max(0, Math.min(100, v / mx * 100))}%;background:${c}"></i></div>`;
+    const warn = op.wind > 0 ? `⚠ ${ACT_NAME()[op.act] || ""}!` : (sim.grip ? (L().gripOn || "") : (L().approach || ""));
+    $("hud").innerHTML = `<div>${L().rounds || ""}<b>${sim.rounds[0]} : ${sim.rounds[1]}</b><small>${L().round || ""} ${sim.round}/3 · ${Math.ceil(left)} с</small></div>
+      <div>${L().myBal || ""}<b>${Math.round(me.b)}</b>${bar(me.b, me.bmax, "#2e86de")}</div>
+      <div>${L().opBal || ""}<b>${Math.round(op.b)}</b>${bar(op.b, op.bmax, "#c0392b")}</div>
+      <div>${L().stamina || ""}<b>${Math.round(me.s)}</b>${bar(me.s, me.smax, "linear-gradient(90deg,#e74c3c,#f1c40f,#2ecc71)")}</div>
+      <div class="${op.wind > 0 ? "alert" : ""}">${L().state || ""}<b class="small">${warn}</b></div>`;
+  }
+
+  // ---- басқару
+  function controls() {
+    const c = $("ctrl");
+    if (mode === "ready") { c.innerHTML = `<button class="go" id="go">▶ ${L().start || "Start"}</button>`; $("go").onclick = start; }
+    else if (mode === "run") {
+      c.innerHTML = `<div id="joy"><div id="knob"></div></div><div class="btns">
+        <button id="b_pull">⬅ ${L().pull}</button><button id="b_push">${L().push} ➡</button>
+        <button id="b_twist">🔄 ${L().twist}</button><button id="b_hold" class="hold">🛡 ${L().hold}</button>
+        <button id="b_x" class="x">🐎 ${L().free}</button></div>`;
+      const pad = $("joy"), knob = $("knob");
+      const upd = (ev) => { const r = pad.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+        let dx = (ev.clientX - cx) / (r.width / 2), dy = (ev.clientY - cy) / (r.height / 2); const l = Math.hypot(dx, dy);
+        if (l > 1) { dx /= l; dy /= l; } joy = { x: dx, y: dy, on: l > 0.25 }; knob.style.transform = `translate(${dx * 34}px, ${dy * 34}px)`; };
+      pad.addEventListener("pointerdown", (e) => { pad.setPointerCapture(e.pointerId); upd(e); });
+      pad.addEventListener("pointermove", (e) => { if (e.buttons || e.pointerType === "touch") upd(e); });
+      const end = () => { joy = { x: 0, y: 0, on: false }; knob.style.transform = ""; };
+      pad.addEventListener("pointerup", end); pad.addEventListener("pointercancel", end);
+      [["b_pull", "pull"], ["b_push", "push"], ["b_twist", "twist"]].forEach(([id, a]) => $(id).addEventListener("pointerdown", (e) => { e.preventDefault(); act(["a", a]); }));
+      $("b_x").addEventListener("pointerdown", (e) => { e.preventDefault(); act(["x", null]); });
+      const hb = $("b_hold");
+      hb.addEventListener("pointerdown", (e) => { e.preventDefault(); hb.setPointerCapture(e.pointerId); act(["h", 1]); });
+      ["pointerup", "pointercancel"].forEach((t) => hb.addEventListener(t, () => act(["h", 0])));
+    } else c.innerHTML = "";
+    setH();
+  }
+  document.addEventListener("keydown", (e) => { if (keys[e.code]) return; keys[e.code] = true; if (mode !== "run") return;
+    const map = { KeyJ: ["a", "pull"], KeyK: ["a", "push"], KeyL: ["a", "twist"], KeyQ: ["a", "twist"], KeyE: ["a", "twist"], KeyX: ["x", null] };
+    if (map[e.code]) { e.preventDefault(); act(map[e.code]); }
+    if (e.code === "Space") { e.preventDefault(); act(["h", 1]); } });
+  document.addEventListener("keyup", (e) => { keys[e.code] = false; if (mode === "run" && e.code === "Space") act(["h", 0]); });
+
+  function act(a) { if (run && !run.done) run.queue.push(a); }
+  function keyDir() { let x = 0, y = 0;
+    if (keys.KeyA || keys.ArrowLeft) x -= 1; if (keys.KeyD || keys.ArrowRight) x += 1;
+    if (keys.KeyW || keys.ArrowUp) y -= 1; if (keys.KeyS || keys.ArrowDown) y += 1; return [x, y]; }
+
+  function start() {
+    const s = args.state, me = args.me;
+    const sim = new A.Sim(s.stats[me], s.level, s.round_s, s.ai_stats);
+    run = { sim, inputs: [], queue: [], lastDir: [0, 0], t0: performance.now() + 3000, done: false, phases: [0, 0], ev0: 0, flash: "", flashT: 0, fall: null };
+    mode = "run"; controls();
+  }
+
+  function stepRun(now) {
+    const r = run, sim = r.sim, t = (now - r.t0) / 1000;
+    if (t < 0) { $("big").textContent = Math.ceil(-t); render(sim, now / 1000, r.phases, null); hud(sim); return; }
+    if (r.pause && now < r.pause) { if (r.fall) r.fall.t = (now - r.fallStart) / 1000; render(r.frozen || sim, now / 1000, r.phases, r.fall); return; }
+    if (r.pause) { r.t0 += now - r.pauseFrom; r.pause = 0; r.fall = null; r.frozen = null; }
+    const target = Math.floor(((now - r.t0) / 1000) / A.DT), lim = sim.roundSteps * 3 + 10;
+    let guard = 0;
+    while (!r.done && sim.n < target && guard < 12) {
+      const n = sim.n, ev = [];
+      let [dx, dy] = keyDir(); if (joy.on) { dx = joy.x; dy = joy.y; }
+      let d = [0, 0]; const l = Math.hypot(dx, dy);
+      if (l > 0.2) d = [Math.round(dx / l * 1000) / 1000, Math.round(dy / l * 1000) / 1000];
+      if (Math.abs(d[0] - r.lastDir[0]) + Math.abs(d[1] - r.lastDir[1]) > 0.05) { ev.push([n, "d", d]); r.lastDir = d; }
+      while (r.queue.length) { const q = r.queue.shift(); ev.push([n, q[0], q[1]]); }
+      ev.forEach((e) => r.inputs.push(e));
+      const before = JSON.parse(JSON.stringify(sim.p)), wasGrip = sim.grip;
+      sim.step(ev);
+      sim.p.forEach((pp, i) => { r.phases[i] += (sim.grip ? 0.02 : 0.25); });
+      if (sim.over || sim.n >= lim) r.done = true;
+      guard++;
+      // раунд аяқталды — құлау анимациясы
+      if (sim.lastRound && sim.lastRound.n === n) {
+        const fallEv = sim.events.filter((e) => e[0] === n && e[1] === "fall")[0];
+        const frozen = { p: before, grip: wasGrip, rounds: sim.rounds.slice(), round: sim.round, roundSteps: sim.roundSteps, rn: sim.roundSteps, sx: 0 };
+        r.fall = fallEv ? { who: fallEv[2], t: 0 } : null; r.frozen = fallEv ? frozen : null;
+        r.fallStart = now; r.pauseFrom = now; r.pause = now + 2200;
+        const w = sim.lastRound.winner;
+        r.flash = w === 0 ? "🏆 " + (L().roundWon || "") : w === 1 ? "😣 " + (L().roundLost || "") : "🤝 " + (L().roundDraw || ""); r.flashT = now;
+        break;
+      }
+    }
+    while (r.ev0 < sim.events.length) { const e = sim.events[r.ev0++];
+      const lab = { counter: L().counter, grip: L().gripOn, free: L().freed, warn: L().warnOut }[e[1]];
+      if (lab && !(e[1] === "counter" && e[2] !== 0)) { r.flash = lab; r.flashT = now; }
+      if ((e[1] === "pull" || e[1] === "push" || e[1] === "twist") && e[2] === 0) { r.flash = "💥 " + ACT_NAME()[e[1]]; r.flashT = now; } }
+    $("big").textContent = now - r.flashT < 1300 ? r.flash : "";
+    render(r.fall && r.frozen ? r.frozen : sim, now / 1000, r.phases, r.fall); hud(sim);
+    if (r.done && !r.pause && !pending) {
+      pending = true; mode = "wait"; controls();
+      $("big").textContent = "🏁 " + sim.rounds[0] + " : " + sim.rounds[1];
+      send("streamlit:setComponentValue", { value: { inputs: r.inputs, nonce: Date.now() + Math.random() }, dataType: "json" });
+    }
+  }
+
+  let idleSim = null;
+  function frame(now) {
+    requestAnimationFrame(frame);
+    if (!args) return;
+    if (mode === "run" && run) { stepRun(now); return; }
+    if (!idleSim) { const s = args.state, me = args.me == null ? 0 : args.me; idleSim = new A.Sim(s.stats[me], s.level, s.round_s, s.ai_stats); }
+    const t = now / 1000; render(idleSim, t, [t * 1.5, t * 1.5 + 1], null); hud(idleSim);
+  }
+
+  function bar() {
+    const a = args, s = a.state, rd = s.rides || [null, null];
+    const res = (p) => rd[p] ? `${rd[p].rw} : ${rd[p].rl}` : (s.turn === p && !s.over ? "🐎 …" : "—");
+    $("bar").innerHTML = s.solo
+      ? `<span class="pl">🟦 ${a.names[a.me == null ? 0 : a.me]}</span><span class="res">${rd.find((x) => x) ? res(rd[0] ? 0 : 1) : "—"}</span><span class="pl">${a.ai_name || ""} 🟥</span>`
+      : `<span class="pl">⚪ ${a.names[0]}</span><span class="res">${res(0)}</span><span class="res">${res(1)}</span><span class="pl">${a.names[1]} ⚫</span>`;
+    $("msg").textContent = a.message || "";
+  }
+  function decide() {
+    const s = args.state;
+    if (args.clickable && !s.over && !pending) { if (mode !== "run") { mode = "ready"; run = null; } }
+    else if (mode !== "run" || !args.clickable) mode = "idle";
+    controls();
+  }
+  window.addEventListener("message", (ev) => {
+    const d = ev.data;
+    if (!d || d.type !== "streamlit:render") return;
+    const prev = args; args = d.args;
+    if (!prev || prev.state.turn !== args.state.turn || (prev.state.last || {}).id !== (args.state.last || {}).id) { pending = false; if (mode === "wait") mode = "idle"; idleSim = null; }
+    bar(); decide(); setH();
+  });
+  window.addEventListener("resize", () => args && setH());
+  requestAnimationFrame(frame);
+  send("streamlit:componentReady", { apiVersion: 1 });
+  // ================= AUDARYSPAK UI соңы =================
+
+})();
+</script>
+</body>
+</html>
