@@ -25,7 +25,7 @@ GAMES = ("togyz", "asyk", "doyby", "jamby", "kyzkuu", "tenge", "kokpar", "audary
 
 # Чемпионат параметрлері (settings кестесі арқылы өзгертуге болады)
 DEFAULTS = {
-    "price": "500",           # бір төлем, ₸
+    "price": "100",           # бір төлем (3 әрекет), ₸
     "attempts_per_pay": "3",  # бір төлемге әрекет саны
     "fund_share": "30",       # жүлде қорына, %
     "min_withdraw": "1000",   # шығаруға қажетті ең аз ұпай
@@ -271,6 +271,15 @@ def init() -> None:
                     execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
         except Exception:  # noqa: BLE001
             pass
+    # v2.6: әрекет бағасы 500 ₸ → 100 ₸ (бір рет қана; кейін админ өзгертсе — қозғамаймыз)
+    try:
+        if not execute("SELECT value FROM settings WHERE key = 'price_v26'", (), "one"):
+            r = execute("SELECT value FROM settings WHERE key = 'price'", (), "one")
+            if r and str(r["value"]).strip() == "500":
+                set_setting("price", "100")
+            set_setting("price_v26", "1")
+    except Exception:  # noqa: BLE001
+        pass
     _INIT = True
 
 
