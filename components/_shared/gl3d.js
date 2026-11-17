@@ -224,7 +224,7 @@
   }
 
   // ---- 3D шабандоз: m — ердің үстіндегі нүкте. role: girl | jigit | jigit2
-  function rider3d(mh, k, role, ph, lean, leanSide, whipUp) {
+  function rider3d(mh, k, role, ph, lean, leanSide, whipUp, grab) {
     const { P, seg, SPH, CYL, CONE, TAPER, BOX, mul, T, RX, RZ } = G3;
     const coat = hex(role === "girl" ? k.robe : k.robe), dress = hex(k.dress), skin = hex(k.skin), hair = hex(k.hair),
       trim = hex(k.trim), boot = [0.1, 0.07, 0.05], robe2 = hex(k.robe2);
@@ -259,7 +259,9 @@
       const up = role !== "girl" && sd === 1 && whipUp && !lean;
       const reach = lean && sd === leanSide;
       let el, hd;
-      if (reach) { el = [0.22, 0.2, sd * 0.38]; hd = [0.28, -0.32, sd * 0.5]; }
+      if (grab === 2) { el = [0.0, 0.78, sd * 0.42]; hd = [-0.08, 1.02 + Math.sin(ph * 9 + sd) * 0.08, sd * 0.6]; }   // құлап бара жатыр
+      else if (grab) { el = [0.3, 0.4, grab * 0.4 + sd * 0.1]; hd = [0.34, 0.42, grab * 0.82 + sd * 0.14]; }        // қарсыластан ұстау
+      else if (reach) { el = [0.22, 0.2, sd * 0.38]; hd = [0.28, -0.32, sd * 0.5]; }
       else if (up) { el = [0.02, 0.84, 0.3]; hd = [0.1, 1.08, 0.32]; }
       else { el = [0.22, 0.35, sd * 0.25]; hd = [0.46, 0.18, sd * 0.12]; }
       seg(mt, sh(sd), el, 0.072, role === "girl" ? dress : coat);

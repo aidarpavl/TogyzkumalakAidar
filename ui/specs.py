@@ -748,7 +748,8 @@ class Audaryspak(Spec):
                                   "myBal": tr("au_my_bal"), "opBal": tr("au_op_bal"), "state": tr("au_state"),
                                   "gripOn": tr("au_grip"), "approach": tr("au_approach"), "counter": tr("au_counter"),
                                   "freed": tr("au_freed"), "warnOut": tr("au_warn"), "roundWon": tr("au_round_won"),
-                                  "roundLost": tr("au_round_lost"), "roundDraw": tr("au_round_draw")},
+                                  "roundLost": tr("au_round_lost"), "roundDraw": tr("au_round_draw"),
+                                  "pullOff": tr("au_pull_off"), "pushOff": tr("au_push_off"), "twistOff": tr("au_twist_off")},
                           room=room, token=tick(), key=key, default=None)
         v = take(val, key)
         if v and clickable:

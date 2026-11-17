@@ -19,15 +19,42 @@
   const ACT_NAME = () => ({ pull: L().pull, push: L().push, twist: L().twist });
 
   // ---- шабандоздардың көріністегі орны мен бағыты
+  const clamp01 = (x) => Math.max(0, Math.min(1, x));
+  const ease = (x) => x * x * (3 - 2 * x);
+  function gripLayout(a, b, t) {
+    const mx = (a.x + b.x) / 2, mz = (a.y + b.y) / 2, th = t * 0.35, hx = Math.cos(th), hz = Math.sin(th);
+    const px = -hz, pz = hx;   // атқа қатысты оң жақ (+z)
+    return [{ x: mx - px * 0.8, z: mz - pz * 0.8, hx, hz, side: 1 }, { x: mx + px * 0.8, z: mz + pz * 0.8, hx, hz, side: -1 }];
+  }
   function poses(sim, t, fall) {
     const a = sim.p[0], b = sim.p[1];
-    if (sim.grip) {
-      const mx = (a.x + b.x) / 2, mz = (a.y + b.y) / 2, th = t * 0.35, hx = Math.cos(th), hz = Math.sin(th);
-      const px = -hz, pz = hx;   // оң жақ (+z) векторы
-      return [{ x: mx - px * 0.8, z: mz - pz * 0.8, hx, hz, side: 1 }, { x: mx + px * 0.8, z: mz + pz * 0.8, hx, hz, side: -1 }];
-    }
+    if (sim.grip) return gripLayout(a, b, fall ? fall.tw : t);
     const dx = b.x - a.x, dz = b.y - a.y, d = Math.hypot(dx, dz) || 1;
-    return [{ x: a.x, z: a.y, hx: dx / d, hz: dz / d, side: 1 }, { x: b.x, z: b.y, hx: -dx / d, hz: -dz / d, side: 1 }];
+    const free = [{ x: a.x, z: a.y, hx: dx / d, hz: dz / d, side: 1 }, { x: b.x, z: b.y, hx: -dx / d, hz: -dz / d, side: 1 }];
+    if (!fall || !fall.conv) return free;
+    // раунд уақытпен/шеңберден шығумен бітсе — жеңімпаз қарсыласына шауып барып ұстасады
+    const g = gripLayout(a, b, fall.tw), k = ease(clamp01(fall.t / 0.5));
+    return free.map((q, i) => { const r = g[i], hx = q.hx + (r.hx - q.hx) * k, hz = q.hz + (r.hz - q.hz) * k, l = Math.hypot(hx, hz) || 1;
+      return { x: q.x + (r.x - q.x) * k, z: q.z + (r.z - q.z) * k, hx: hx / l, hz: hz / l, side: k > 0.5 ? r.side : q.side }; });
+  }
+
+  // ---- құлау: жұлып алу (pull), итеріп құлату (push), бұрап түсіру (twist)
+  function fallRider(q, ang, k, fall, m) {
+    const { P, SPH, mul, T, RX, RY } = G3;
+    const t = fall.t, f = clamp01((t - 0.45) / 0.85), dir = fall.kind === "push" ? -q.side : q.side;
+    const lat = dir * (fall.kind === "push" ? 1.5 : 0.65) * (1 - (1 - f) * (1 - f)), drop = 1.5 * f * f;
+    const th = dir * 1.42 * Math.min(1, f * 1.25), land = f >= 1 ? Math.max(0, 0.08 * Math.sin((t - 1.3) * 14) * Math.exp(-(t - 1.3) * 5)) : 0;
+    let M = mul(G3.T(q.x, 0, q.z), RY(ang));
+    M = mul(M, T(0.25 * f, -drop + land, lat));
+    M = mul(mul(M, T(0, 1.76, 0)), RX(th));
+    if (fall.kind === "twist") M = mul(M, RY(dir * f * 1.4));
+    M = mul(M, T(0, -1.76, 0));
+    rider3d(M, k, "jigit", t * 3, 0, 0, false, f < 1 ? 2 : 0);
+    if (f >= 1) {   // жерге соғылғандағы шаң
+      const e = clamp01((t - 1.3) / 0.8), w = mul(G3.T(q.x, 0, q.z), RY(ang));
+      for (let d = 0; d < 7; d++) { const a2 = d / 7 * 6.28, rr = 0.3 + e * 1.3;
+        P(w, SPH, [0.25 + Math.cos(a2) * rr, 0.15 + e * 0.5, lat + dir * 0.5 + Math.sin(a2) * rr], null, [0.3 + e * 0.5, 0.25 + e * 0.35, 0.3 + e * 0.5], [0.8, 0.7, 0.55], 0, 0.55 * (1 - e)); }
+    }
   }
 
   function arenaScene(sim, t, phases, fall) {
@@ -41,23 +68,38 @@
       P(m, CYL, [x, 1.0, z], null, [3.2, 2.0, 3.2], [0.95, 0.93, 0.88], 0.02);
       P(m, CONE, [x, 2.8, z], null, [3.4, 1.6, 3.4], [0.92, 0.9, 0.84], 0.02);
       P(m, CYL, [x, 3.7, z], null, [0.5, 0.15, 0.5], [0.75, 0.15, 0.2], 0.1); }
-    const ps = poses(sim, t, fall);
+    const ps = poses(sim, t, fall), ft = fall ? fall.t : 0;
+    const holding = sim.grip || (fall && fall.conv && ft > 0.35);
     ps.forEach((q, i) => {
       const r = sim.p[i], k = COL[i === 0 ? "me" : "op"], ang = Math.atan2(-q.hz, q.hx);
-      const mm = G3.mul(G3.T(q.x, 0, q.z), G3.RY(ang));
-      const ph = phases[i] + (sim.grip ? t * 3 : 0);
+      const isL = fall && fall.who === i, isW = fall && fall.who === 1 - i;
+      const run = isL ? Math.max(0, ft - 0.9) * 2.4 * Math.min(1, (ft - 0.9) * 2) : 0;   // иесіз ат алға қашады
+      const mm = G3.mul(G3.T(q.x + q.hx * run, 0, q.z + q.hz * run), G3.RY(ang));
+      const ph = phases[i] + (holding ? t * 3 : 0) + (isL && ft > 0.9 ? ft * 7 : 0);
       const mh = horse3d(mm, k, ph);
-      let lean = 0, side = q.side;
-      if (sim.grip) {
-        lean = 0.18 + (1 - r.b / r.bmax) * 0.55;
-        if (r.wind > 0) lean += r.act === "pull" ? -0.12 : r.act === "push" ? 0.22 : 0.12;
-        if (r.hold === 1) lean *= 0.5;
+      if (isL && ft > 0.45) fallRider(q, ang, k, fall, m);
+      else {
+        let lean = 0, side = q.side, grab = holding ? q.side : 0, whip = false;
+        if (holding && !fall) {
+          lean = 0.18 + (1 - r.b / r.bmax) * 0.55;
+          if (r.wind > 0) lean += r.act === "pull" ? -0.12 : r.act === "push" ? 0.22 : 0.12;
+          if (r.hold === 1) lean *= 0.5;
+          lean = Math.max(0, lean);
+        } else if (isL) {          // бастапқы сәт: жұлынып/итеріліп барады
+          const w = ft / 0.45; lean = 0.3 + 0.6 * w; side = fall.kind === "push" ? -q.side : q.side;
+        } else if (isW) {
+          if (ft < 1.6) { const w = Math.min(1, ft / 0.45);
+            if (fall.kind === "push") { lean = 0.35 + 0.45 * w; side = q.side; }        // алға итереді
+            else { lean = 0.25 + 0.4 * w; side = -q.side; }                          // өзіне қарай жұлады
+            if (ft > 0.8) grab = 0;
+          } else { lean = 0; grab = 0; whip = true; }                                  // жеңіс белгісі
+        } else if (holding) { lean = 0.2; }
+        rider3d(mh, k, "jigit", ph, lean, side, whip, grab || undefined);
       }
-      if (fall && fall.who === i) { const f = Math.min(1, fall.t / 1.2); lean = 0.4 + f * 1.25; side = q.side * (sim.grip ? -1 : 1); }
-      rider3d(mh, k, "jigit", ph, Math.max(0, lean), side, false);
-      if (i === 0) P(mh, CONE, [0.0, 3.25 + Math.sin(t * 4) * 0.1, 0], [0, 0, 3.1416], [0.18, 0.35, 0.18], [0.97, 0.78, 0.2], 0.6);
-      if (!sim.grip && r.dx * r.dx + r.dy * r.dy > 0.01) for (let d = 0; d < 3; d++) {   // шаң
-        const f = ((t * 2 + d * 0.33 + i * 0.5) % 1); P(m, SPH, [q.x - q.hx * (0.8 + f * 1.2), 0.15 + f * 0.4, q.z - q.hz * (0.8 + f * 1.2)], null, [0.25 + f * 0.4, 0.2 + f * 0.3, 0.25 + f * 0.4], [0.8, 0.7, 0.55], 0, 0.45 * (1 - f)); }
+      if (i === 0) P(m, CONE, [q.x, 3.25 + Math.sin(t * 4) * 0.1 - (isL && ft > 0.45 ? 1.4 : 0), q.z], [0, 0, 3.1416], [0.18, 0.35, 0.18], [0.97, 0.78, 0.2], 0.6);
+      if ((!holding && r.dx * r.dx + r.dy * r.dy > 0.01) || run > 0) for (let d = 0; d < 3; d++) {   // шаң
+        const f = ((t * 2 + d * 0.33 + i * 0.5) % 1), bx = q.x + q.hx * run, bz = q.z + q.hz * run;
+        P(m, SPH, [bx - q.hx * (0.8 + f * 1.2), 0.15 + f * 0.4, bz - q.hz * (0.8 + f * 1.2)], null, [0.25 + f * 0.4, 0.2 + f * 0.3, 0.25 + f * 0.4], [0.8, 0.7, 0.55], 0, 0.45 * (1 - f)); }
     });
     return ps;
   }
@@ -160,14 +202,22 @@
       sim.p.forEach((pp, i) => { r.phases[i] += (sim.grip ? 0.02 : 0.25); });
       if (sim.over || sim.n >= lim) r.done = true;
       guard++;
-      // раунд аяқталды — құлау анимациясы
+      // раунд аяқталды — жеңілген шабандозды жұлып алады немесе итеріп құлатады
       if (sim.lastRound && sim.lastRound.n === n) {
-        const fallEv = sim.events.filter((e) => e[0] === n && e[1] === "fall")[0];
-        const frozen = { p: before, grip: wasGrip, rounds: sim.rounds.slice(), round: sim.round, roundSteps: sim.roundSteps, rn: sim.roundSteps, sx: 0 };
-        r.fall = fallEv ? { who: fallEv[2], t: 0 } : null; r.frozen = fallEv ? frozen : null;
-        r.fallStart = now; r.pauseFrom = now; r.pause = now + 2200;
-        const w = sim.lastRound.winner;
-        r.flash = w === 0 ? "🏆 " + (L().roundWon || "") : w === 1 ? "😣 " + (L().roundLost || "") : "🤝 " + (L().roundDraw || ""); r.flashT = now;
+        const w = sim.lastRound.winner, ACTS = ["pull", "push", "twist"];
+        r.fall = null; r.frozen = null;
+        if (w >= 0) {
+          let kind = null;
+          for (const e of sim.events) if (e[0] === n && e[2] === w) {
+            if (ACTS.includes(e[1])) kind = e[1];
+            else if (e[1] === "counter" && ACTS.includes(before[w].act)) kind = before[w].act; }
+          if (!kind) for (let j = sim.events.length - 1; j >= 0; j--) { const e = sim.events[j]; if (ACTS.includes(e[1]) && e[2] === w) { kind = e[1]; break; } }
+          kind = kind || "pull";
+          r.frozen = { p: before, grip: wasGrip, rounds: sim.rounds.slice(), round: sim.round, roundSteps: sim.roundSteps, rn: sim.roundSteps };
+          r.fall = { who: 1 - w, t: 0, kind, conv: !wasGrip, tw: now / 1000 };
+          r.flash = (w === 0 ? "🏆 " : "😣 ") + (L()[kind + "Off"] || "") + " · " + (w === 0 ? L().roundWon : L().roundLost);
+        } else r.flash = "🤝 " + (L().roundDraw || "");
+        r.fallStart = now; r.pauseFrom = now; r.pause = now + (w >= 0 ? 3000 : 1500); r.flashT = now;
         break;
       }
     }
@@ -175,7 +225,7 @@
       const lab = { counter: L().counter, grip: L().gripOn, free: L().freed, warn: L().warnOut }[e[1]];
       if (lab && !(e[1] === "counter" && e[2] !== 0)) { r.flash = lab; r.flashT = now; }
       if ((e[1] === "pull" || e[1] === "push" || e[1] === "twist") && e[2] === 0) { r.flash = "💥 " + ACT_NAME()[e[1]]; r.flashT = now; } }
-    $("big").textContent = now - r.flashT < 1300 ? r.flash : "";
+    $("big").textContent = now - r.flashT < (r.pause ? 3000 : 1300) ? r.flash : "";
     render(r.fall && r.frozen ? r.frozen : sim, now / 1000, r.phases, r.fall); hud(sim);
     if (r.done && !r.pause && !pending) {
       pending = true; mode = "wait"; controls();
@@ -190,7 +240,10 @@
     if (!args) return;
     if (mode === "run" && run) { stepRun(now); return; }
     if (!idleSim) { const s = args.state, me = args.me == null ? 0 : args.me; idleSim = new A.Sim(s.stats[me], s.level, s.round_s, s.ai_stats); }
-    const t = now / 1000; render(idleSim, t, [t * 1.5, t * 1.5 + 1], null); hud(idleSim);
+    const t = now / 1000;
+    if (window.__auFall) { const f = window.__auFall; idleSim.grip = !f.conv; if (f.conv) { idleSim.p[0].x = -6; idleSim.p[1].x = 5; }
+      render(idleSim, f.tw, [0, 1], f); return; }   // сынақ үшін ғана
+    render(idleSim, t, [t * 1.5, t * 1.5 + 1], null); hud(idleSim);
   }
 
   function bar() {
