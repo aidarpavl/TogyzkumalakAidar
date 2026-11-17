@@ -89,7 +89,14 @@ def touch_presence():
 CSS = """
 <style>
 #MainMenu, footer, [data-testid="stToolbar"] {visibility: hidden;}
-.block-container {padding-top: 1.1rem; padding-bottom: 2rem; max-width: 1200px;}
+/* Streamlit-тің жоғарғы жолағы (header) мазмұнның үстін жауып тұрмасын */
+header[data-testid="stHeader"], [data-testid="stDecoration"], [data-testid="stStatusWidget"] {
+  display: none !important; height: 0 !important;}
+.stApp > header {display: none !important;}
+.block-container, [data-testid="stMainBlockContainer"], [data-testid="block-container"] {
+  padding-top: max(1rem, env(safe-area-inset-top)) !important; padding-bottom: 2rem; max-width: 1200px;}
+[data-testid="stAppViewContainer"] > section, [data-testid="stMain"] {padding-top: 0 !important; margin-top: 0 !important;}
+.st-key-lang_toggle button {white-space: nowrap; min-height: 42px;}
 .hero {background: linear-gradient(120deg, #5c3518 0%, #a5642a 55%, #e0a458 100%); color: #fff8ec;
        border-radius: 18px; padding: 12px 18px; margin-bottom: 8px; box-shadow: 0 6px 18px #0003;}
 .hero h1 {margin: 0; font-size: clamp(20px, 5vw, 32px); color: #fff8ec; padding: 0;}
@@ -136,7 +143,8 @@ div[role="radiogroup"] > label {background: #a5642a14; border-radius: 999px; pad
     min-width: 0 !important; width: auto !important; flex: 1 1 0 !important;}
 .st-key-movebtns button {padding: 4px 0 !important; min-height: 38px;}
 @media (max-width: 640px) {
-  .block-container {padding-left: .45rem; padding-right: .45rem; padding-top: .6rem;}
+  .block-container, [data-testid="stMainBlockContainer"] {padding-left: .45rem !important; padding-right: .45rem !important;
+    padding-top: max(.7rem, env(safe-area-inset-top)) !important;}
   .hero {padding: 10px 12px; border-radius: 14px;}
   [data-testid="stMetricValue"] {font-size: 1.2rem;}
 }
