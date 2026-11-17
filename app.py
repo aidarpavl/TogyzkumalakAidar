@@ -11,7 +11,7 @@ import re  # noqa: E402
 import sys  # noqa: E402
 from pathlib import Path  # noqa: E402
 
-REQUIRED = "2.5"
+REQUIRED = "2.6"
 _ROOT = Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path[:1]:
     sys.path.insert(0, str(_ROOT))
@@ -47,7 +47,7 @@ else:
     st.markdown(
         f"- Табылған нұсқа / найдена версия: **{_fv or '—'}**, керек / нужна: **{REQUIRED}**\n"
         f"- `core/` ішінде / в `core/`: `{', '.join(_files) or 'жоқ / нет'}`\n"
-        f"- Керек файлдар / нужные файлы: `__init__.py, asyk.py, audaryspak.py, db.py, draughts.py, engine.py, i18n.py, jamby.py, kokpar.py, kyzkuu.py, llm.py, tenge.py`\n"
+        f"- Керек файлдар / нужные файлы: `__init__.py, asyk.py, audaryspak.py, db.py, draughts.py, engine.py, i18n.py, jamby.py, kokpar.py, kures.py, kyzkuu.py, llm.py, tenge.py`\n"
         f"- `core/__init__.py` ішінде дәл осы жол болуы керек / в `core/__init__.py` должна быть строка: "
         f"`VERSION = \"{REQUIRED}\"`\n"
         f"- Файлдарды ауыстырғаннан кейін: **Manage app → ⋮ → Reboot app** / после замены: **Manage app → ⋮ → Reboot app**")
@@ -86,9 +86,9 @@ def header():
 
 def game_page(gk: str):
     spec = SPECS[gk]
-    subs = ["play"] + (["puzzles"] if gk == "togyz" else []) + (["upgrade"] if gk in ("kyzkuu", "tenge", "kokpar", "audaryspak") else []) + ["rules"]
+    subs = ["play"] + (["puzzles"] if gk == "togyz" else []) + (["upgrade"] if gk in ("kyzkuu", "tenge", "kokpar", "audaryspak", "kures") else []) + ["rules"]
     sub = st.radio("sub", subs, horizontal=True, key=f"sub_{gk}", label_visibility="collapsed",
-                   format_func=lambda x: tr(f"nav_{x}"))
+                   format_func=lambda x: tr("nav_upgrade_w") if (x == "upgrade" and gk == "kures") else tr(f"nav_{x}"))
     if sub == "play":
         play_page(spec)
     elif sub == "upgrade":
@@ -128,11 +128,11 @@ if qp_room:
         ss["_goto"] = gk
     st.query_params.clear()
 
-PAGES = ["home", "togyz", "asyk", "doyby", "jamby", "kyzkuu", "tenge", "kokpar", "audaryspak", "champ", "rating", "profile", "settings"]
+PAGES = ["home", "togyz", "asyk", "doyby", "jamby", "kyzkuu", "tenge", "kokpar", "audaryspak", "kures", "champ", "rating", "profile", "settings"]
 if is_admin():
     PAGES.append("admin")
 LABELS = {"home": tr("nav_home"), "togyz": "⚫ " + tr("game_togyz"), "asyk": "🦴 " + tr("game_asyk"),
-          "doyby": "♛ " + tr("game_doyby"), "jamby": "🏹 " + tr("game_jamby"), "kyzkuu": "🐎 " + tr("game_kyzkuu"), "tenge": "🪙 " + tr("game_tenge"), "kokpar": "🐐 " + tr("game_kokpar"), "audaryspak": "🤼 " + tr("game_audaryspak"), "champ": tr("nav_champ"), "rating": tr("nav_rating"),
+          "doyby": "♛ " + tr("game_doyby"), "jamby": "🏹 " + tr("game_jamby"), "kyzkuu": "🐎 " + tr("game_kyzkuu"), "tenge": "🪙 " + tr("game_tenge"), "kokpar": "🐐 " + tr("game_kokpar"), "audaryspak": "🤼 " + tr("game_audaryspak"), "kures": "💪 " + tr("game_kures"), "champ": tr("nav_champ"), "rating": tr("nav_rating"),
           "profile": tr("nav_profile"), "settings": tr("nav_settings"), "admin": tr("nav_admin")}
 
 goto = ss.pop("_goto", None)

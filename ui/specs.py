@@ -7,9 +7,9 @@ from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import asyk, audaryspak, db, draughts, engine, jamby, kokpar, kyzkuu, llm, tenge
-from core.i18n import (RULES, RULES_ASYK, RULES_AUDARYSPAK, RULES_DOYBY, RULES_JAMBY, RULES_KOKPAR, RULES_KYZKUU,
-                       RULES_TENGE)
+from core import asyk, audaryspak, db, draughts, engine, jamby, kokpar, kures, kyzkuu, llm, tenge
+from core.i18n import (RULES, RULES_ASYK, RULES_AUDARYSPAK, RULES_DOYBY, RULES_JAMBY, RULES_KOKPAR, RULES_KURES,
+                       RULES_KYZKUU, RULES_TENGE)
 from ui.common import ss, take, tick, tr
 
 _ROOT = Path(__file__).resolve().parent.parent / "components"
@@ -21,6 +21,7 @@ _kyzkuu = components.declare_component("kyzkuu_field", path=str(_ROOT / "kyzkuu"
 _tenge = components.declare_component("tenge_field", path=str(_ROOT / "tenge"))
 _kokpar = components.declare_component("kokpar_field", path=str(_ROOT / "kokpar"))
 _audaryspak = components.declare_component("audaryspak_field", path=str(_ROOT / "audaryspak"))
+_kures = components.declare_component("kures_field", path=str(_ROOT / "kures"))
 
 
 class Spec:
@@ -786,5 +787,114 @@ class Audaryspak(Spec):
         return 0.3
 
 
+class Kures(Spec):
+    key = "kures"
+    icon = "🤼"
+    has_options = True
+
+    def rules(self, lang):
+        return RULES_KURES[lang]
+
+    def options_ui(self, prefix):
+        c1, c2 = st.columns(2)
+        with c1:
+            bs = st.radio(tr("kr_bout"), [180, 120], horizontal=True, key=f"{prefix}_krlen",
+                          format_func=lambda x: tr(f"kr_len_{x}"))
+        with c2:
+            w = st.selectbox(tr("kr_weight"), [74, 60, 90, 100], key=f"{prefix}_krw", format_func=lambda x: tr(f"kr_w_{x}"))
+        return {"bout_s": bs, "weight": w}
+
+    def color_label(self, c):
+        return {"white": "🟦 1", "black": "🟥 2"}.get(c, tr("col_random"))
+
+    def new_state(self, opts=None):
+        return kures.new_state(opts)
+
+    def after_start(self, g):
+        s = g["state"]
+        if g["mode"] == "ai":
+            h = g["human"]
+            lvl = g["level"] if g["level"] in kures.LEVEL else "hard"
+            s["level"] = lvl
+            s["solo"] = True
+            s["turn"] = h
+            s["stats"][h] = _horse_stats(g["names"][h], not ss.guest, kures)
+        else:
+            s["level"] = "medium"
+            for p in (0, 1):
+                s["stats"][p] = _horse_stats(g["names"][p], g["names"][p] == ss.user and not ss.guest, kures)
+        s["ai_stats"] = kures.ai_stats(s["level"])
+        s["ready"] = True
+
+    def on_active(self, room):
+        s = room["state"]
+        if s.get("ready") or room["status"] != "active":
+            return None
+        s["stats"] = [_horse_stats(room["white"], not room["white_guest"], kures),
+                      _horse_stats(room["black"], not room["black_guest"], kures)]
+        s["level"] = "medium"
+        s["ai_stats"] = kures.ai_stats("medium")
+        s["ready"] = True
+        return s
+
+    def apply(self, s, mv):
+        return kures.play(s, {"inputs": list(mv.get("inputs", []))})
+
+    def ai(self, s, level):
+        return {"inputs": []}
+
+    def render(self, s, bottom, names, clickable, key, message="", clocks=None, clock_running=False, room=""):
+        view = {k: v for k, v in s.items() if k != "inputs"}
+        labels = {"side": tr("kk_side"), "front": tr("kk_front"), "rear": tr("kk_rear"), "stamina": tr("kk_stamina"),
+                  "start": tr("kr_start"), "grip": tr("kr_grip"), "a_pull": tr("kr_pull"), "a_push": tr("kr_push"),
+                  "a_rock": tr("kr_rock"), "hold": tr("kr_hold"), "release": tr("kr_release"), "score": tr("kr_score"),
+                  "myBal": tr("kr_my_bal"), "opBal": tr("kr_op_bal"), "state": tr("kr_state"), "gripOn": tr("kr_grip_on"),
+                  "approach": tr("kr_approach"), "counter": tr("kr_counter"), "tcounter": tr("kr_tcounter"),
+                  "failed": tr("kr_failed"), "clean": tr("kr_clean"), "warnOut": tr("kr_warn_out"),
+                  "warnPassive": tr("kr_warn_passive"), "penalty": tr("kr_penalty"), "golden": tr("kr_golden"),
+                  "youWin": tr("kr_you_win"), "youLose": tr("kr_you_lose"), "draw": tr("kr_draw")}
+        for t in kures.THROWS:
+            labels["thr_" + t] = tr("thr_" + t)
+        val = _kures(state=view, me=bottom, names=names, ai_name=tr("kr_vs", lvl=tr(f"lv_{s.get('level', 'medium')}")),
+                     clickable=clickable, message=message, labels=labels, room=room, token=tick(), key=key, default=None)
+        v = take(val, key)
+        if v and clickable:
+            return {"inputs": v.get("inputs", [])}
+        return None
+
+    def score(self, s):
+        return kures.score(s)
+
+    def status(self, s, names):
+        parts = []
+        for p, r in enumerate(s["rides"]):
+            if r:
+                res = tr("kr_clean") if r["clean"] in (0, 1) and r["clean"] == 0 else f"{r['pf']}:{r['pa']}"
+                parts.append(tr("kr_result", name=names[p], r=res))
+        if not s["over"]:
+            parts.append(tr("kr_your_turn"))
+        return " · ".join(parts)
+
+    def hint(self, s):
+        return tr("kr_hint")
+
+    def coach(self, cfg, s, lang):
+        pos = f"Kazakh kuresi, opponent level {s.get('level')}, weight {s.get('weight')}, your stats {s['stats'][s['turn']]}."
+        return llm.coach_generic(cfg, "kures", pos, tr("kr_hint"), lang)
+
+    def rewards(self, s, players, level, champ, mode):
+        w = s.get("winner")
+        if w not in (0, 1):
+            return []
+        name, reg = players[w]
+        if not reg or (mode == "ai" and not champ and level not in ("hard", "master", "llm")):
+            return []
+        db.boost_horse(name, kures.STATS, 5)
+        return [tr("kr_bonus", p=5)]
+
+    def anim_delay(self, s):
+        return 0.3
+
+
 SPECS = {"togyz": Togyz(), "asyk": Asyk(), "doyby": Doyby(), "jamby": Jamby(), "kyzkuu": Kyzkuu(), "tenge": Tenge(),
-         "kokpar": Kokpar(), "audaryspak": Audaryspak()}
+         "kokpar": Kokpar(), "audaryspak": Audaryspak(), "kures": Kures()}

@@ -123,6 +123,10 @@ RULES_BY_GAME = {
     "audaryspak": ("Audaryspak: horseback wrestling, two riders grip each other inside a 40 m ring; moves PULL, PUSH, "
                    "TWIST beat each other like rock-paper-scissors (twist counters pull, pull counters push, push "
                    "counters twist); HOLD protects balance; whoever loses balance falls. Best of 3 rounds."),
+    "kures": ("Kazakh kuresi: standing belt wrestling on a mat. Grip the belt, then PULL/PUSH/ROCK beat each other like "
+              "rock-paper-scissors (rock beats pull, pull beats push, push beats rock); HOLD protects but is weak to push. "
+              "When the opponent's balance is low, throws open (trip, hook, twist, hip throw, belt lift, back throw); "
+              "release in the green zone; throw on the back = clean win, else 1-3 points."),
     "asyk": ("Asyk atu (Kazakh knucklebones): asyks stand inside a ring; you shoot your heavy saqa from the "
              "bottom line; asyks knocked out of the ring are yours; if you capture any, you shoot again."),
 }

@@ -16,7 +16,7 @@ from ui.play import abandon, start_ai
 from ui.specs import SPECS
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
-GAME_KEYS = ["togyz", "asyk", "doyby", "jamby", "kyzkuu", "tenge", "kokpar", "audaryspak"]
+GAME_KEYS = ["togyz", "asyk", "doyby", "jamby", "kyzkuu", "tenge", "kokpar", "audaryspak", "kures"]
 NAME_RE = re.compile(r"^[A-Za-zА-Яа-яЁёӘәҒғҚқҢңӨөҰұҮүҺһІі0-9_]{3,20}$")
 PHONE_RE = re.compile(r"^\+?[78]\d{10}$")
 
@@ -34,7 +34,7 @@ def home_page(public: bool = False):
     c2.image(str(ASSETS / "asyk.png"), use_container_width=True)
     st.markdown("<div class='ornament'></div>", unsafe_allow_html=True)
     icons = {"togyz": "⚫⚪", "asyk": "🦴", "doyby": "♛", "jamby": "🏹🐎", "kyzkuu": "👧🐎🤠", "tenge": "🐎🪙",
-             "kokpar": "🐎🐐🐎", "audaryspak": "🐎🤼🐎"}
+             "kokpar": "🐎🐐🐎", "audaryspak": "🐎🤼🐎", "kures": "🤼‍♂️💪"}
     rows = [GAME_KEYS[i:i + 3] for i in range(0, len(GAME_KEYS), 3)]
     for row in rows:
         cols = st.columns(3)
@@ -109,6 +109,11 @@ def _podium(rows, key="rating", fmt=lambda r: f"⭐ {r['rating']}"):
     st.markdown(html + "</div>", unsafe_allow_html=True)
 
 
+def kures_title(rating):
+    from core import kures  # noqa: WPS433
+    return kures.title_key(rating)
+
+
 def rating_page():
     st.markdown(f"### 🏆 {tr('lb_title')}")
     tabs = st.tabs([tr(f"game_{g}") for g in GAME_KEYS] + [tr("nav_champ")])
@@ -122,7 +127,8 @@ def rating_page():
             table = []
             for i, r in enumerate(rows, 1):
                 wr = round(100 * r["wins"] / r["games"]) if r["games"] else 0
-                table.append({tr("col_place"): i, tr("col_player"): r["username"] + (" 👈" if r["username"] == ss.user else ""),
+                table.append({tr("col_place"): i, tr("col_player"): r["username"] + (" 👈" if r["username"] == ss.user else "")
+                              + (f" · {tr(kures_title(r['rating']))}" if gk == "kures" else ""),
                               tr("col_rating"): r["rating"], tr("col_games"): r["games"], tr("col_wins"): r["wins"],
                               tr("col_losses"): r["losses"], tr("col_draws"): r["draws"], tr("col_winrate"): wr,
                               tr("col_peak"): r["peak"]})
@@ -165,7 +171,8 @@ def profile_page():
             r = db.get_rating(ss.user, gk)
             rank = db.user_rank(ss.user, gk)
             col.metric(tr(f"game_{gk}"), r["rating"], help=f"{tr('col_games')}: {r['games']}")
-            col.caption(f"{tr('place')}: {'#' + str(rank) if rank else '—'} · {r['wins']}/{r['losses']}/{r['draws']}")
+            col.caption(f"{tr('place')}: {'#' + str(rank) if rank else '—'} · {r['wins']}/{r['losses']}/{r['draws']}"
+                        + (f" · {tr(kures_title(r['rating']))}" if gk == "kures" else ""))
     w = db.get_wallet(ss.user)
     st.markdown(f"<div class='wallet'><div>{tr('attempts')}<span>{w['attempts']}</span></div>"
                 f"<div>{tr('points')}<span>{w['points']}</span></div>"
@@ -530,11 +537,11 @@ def admin_page():
 # ---------------------------------------------------------------- Қыз қуу: атты жетілдіру
 
 def upgrade_page(game: str = "kyzkuu"):
-    from core import audaryspak, kokpar, kyzkuu, tenge  # noqa: WPS433
+    from core import audaryspak, kokpar, kures, kyzkuu, tenge  # noqa: WPS433
 
-    mod = {"tenge": tenge, "kokpar": kokpar, "audaryspak": audaryspak}.get(game, kyzkuu)
-    bonus_col = {"tenge": "t_bonus", "kokpar": "k_bonus", "audaryspak": "a_bonus"}.get(game, "bonus")
-    st.markdown(f"### {tr('upg_title')} · {tr('game_' + game)}")
+    mod = {"tenge": tenge, "kokpar": kokpar, "audaryspak": audaryspak, "kures": kures}.get(game, kyzkuu)
+    bonus_col = {"tenge": "t_bonus", "kokpar": "k_bonus", "audaryspak": "a_bonus", "kures": "w_bonus"}.get(game, "bonus")
+    st.markdown(f"### {tr('upg_title_w' if game == 'kures' else 'upg_title')} · {tr('game_' + game)}")
     if not is_registered():
         st.info(tr("upg_need_reg"))
         return
@@ -543,9 +550,12 @@ def upgrade_page(game: str = "kyzkuu"):
     units = {"burst": tr("kmh"), "speed": tr("kmh"), "stamina": "", "reverse": tr("kmh"),
              "t_speed": tr("kmh"), "t_stamina": "", "t_accuracy": "×",
              "k_speed": tr("kmh"), "k_accel": tr("kmh") + "/с", "k_stamina": "", "k_power": "×", "k_agility": "×",
-             "a_stability": "×", "a_agility": "×", "a_stamina": "", "a_power": "×", "a_grip": "×", "a_balance": ""}
+             "a_stability": "×", "a_agility": "×", "a_stamina": "", "a_power": "×", "a_grip": "×", "a_balance": "",
+             "w_power": "×", "w_grip": "×", "w_stamina": "", "w_balance": "", "w_technique": "×", "w_speed": "×"}
     groups = ([(tr("upg_horse_sec"), mod.HORSE_STATS), (tr("upg_rider_sec"), mod.RIDER_STATS)]
-              if game in ("kokpar", "audaryspak") else [(None, mod.STATS)])
+              if game in ("kokpar", "audaryspak") else
+              [(tr("upg_str_sec"), mod.STRENGTH_STATS), (tr("upg_skill_sec"), mod.SKILL_STATS)] if game == "kures" else
+              [(None, mod.STATS)])
     for title, keys in groups:
         if title:
             st.markdown(f"**{title}**")
@@ -554,7 +564,7 @@ def upgrade_page(game: str = "kyzkuu"):
             pct = ((h.get(k) or 1) - 1) * 100
             val = f"×{stats[k]:.3f}" if units[k] == "×" else f"{stats[k]:.1f} {units[k]}".strip()
             col.metric(tr(f"upg_{k}"), val, f"+{pct:.1f}%" if pct > 0.05 else None)
-    st.caption({"tenge": tr("upg_rules_t"), "kokpar": tr("upg_rules_k"), "audaryspak": tr("upg_rules_a")}.get(game, tr("upg_rules")))
+    st.caption({"tenge": tr("upg_rules_t"), "kokpar": tr("upg_rules_k"), "audaryspak": tr("upg_rules_a"), "kures": tr("upg_rules_w")}.get(game, tr("upg_rules")))
     if (h.get(bonus_col) or 0) > 0:  # бұрынғы жиналған бонус — автоматты түрде барлық көрсеткішке
         db.boost_horse(ss.user, mod.STATS, h[bonus_col])
         db.execute(f"UPDATE horses SET {bonus_col} = 0 WHERE username = ?", (ss.user,))
