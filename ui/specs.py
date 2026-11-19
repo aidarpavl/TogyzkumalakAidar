@@ -7,9 +7,9 @@ from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import asyk, audaryspak, db, draughts, engine, jamby, kokpar, kures, kyzkuu, llm, tenge
-from core.i18n import (RULES, RULES_ASYK, RULES_AUDARYSPAK, RULES_DOYBY, RULES_JAMBY, RULES_KOKPAR, RULES_KURES,
-                       RULES_KYZKUU, RULES_TENGE)
+from core import asyk, audaryspak, db, draughts, engine, hantalapay, jamby, kokpar, kures, kyzkuu, llm, tenge
+from core.i18n import (RULES, RULES_ASYK, RULES_AUDARYSPAK, RULES_DOYBY, RULES_HANTALAPAY, RULES_JAMBY, RULES_KOKPAR,
+                       RULES_KURES, RULES_KYZKUU, RULES_TENGE)
 from ui.common import ss, take, tick, tr
 
 _ROOT = Path(__file__).resolve().parent.parent / "components"
@@ -22,6 +22,7 @@ _tenge = components.declare_component("tenge_field", path=str(_ROOT / "tenge"))
 _kokpar = components.declare_component("kokpar_field", path=str(_ROOT / "kokpar"))
 _audaryspak = components.declare_component("audaryspak_field", path=str(_ROOT / "audaryspak"))
 _kures = components.declare_component("kures_field", path=str(_ROOT / "kures"))
+_hantalapay = components.declare_component("hantalapay_field", path=str(_ROOT / "hantalapay"))
 
 
 class Spec:
@@ -896,5 +897,110 @@ class Kures(Spec):
         return 0.3
 
 
+class Hantalapay(Spec):
+    key = "hantalapay"
+    icon = "👑"
+    has_options = True
+
+    def rules(self, lang):
+        return RULES_HANTALAPAY[lang]
+
+    def options_ui(self, prefix):
+        c1, c2 = st.columns(2)
+        with c1:
+            tg = st.radio(tr("hp_target"), [50, 80, 100], horizontal=True, key=f"{prefix}_hptg")
+        with c2:
+            na = st.select_slider(tr("hp_nai"), options=[1, 2, 3, 4, 5, 6], value=3, key=f"{prefix}_hpna")
+        return {"target": tg, "n_ai": na}
+
+    def color_label(self, c):
+        return {"white": "🟦 1", "black": "🟥 2"}.get(c, tr("col_random"))
+
+    def new_state(self, opts=None):
+        return hantalapay.new_state(opts)
+
+    def after_start(self, g):
+        s = g["state"]
+        if g["mode"] == "ai":
+            h = g["human"]
+            lvl = g["level"] if g["level"] in hantalapay.LEVEL else "hard"
+            s["level"] = lvl
+            s["solo"] = True
+            s["turn"] = h
+            s["stats"][h] = _horse_stats(g["names"][h], not ss.guest, hantalapay)
+        else:
+            s["level"] = "medium"
+            for p in (0, 1):
+                s["stats"][p] = _horse_stats(g["names"][p], g["names"][p] == ss.user and not ss.guest, hantalapay)
+        s["ai_stats"] = hantalapay.ai_stats(s["level"])
+        s["ready"] = True
+
+    def on_active(self, room):
+        s = room["state"]
+        if s.get("ready") or room["status"] != "active":
+            return None
+        s["stats"] = [_horse_stats(room["white"], not room["white_guest"], hantalapay),
+                      _horse_stats(room["black"], not room["black_guest"], hantalapay)]
+        s["level"] = "medium"
+        s["ai_stats"] = hantalapay.ai_stats("medium")
+        s["ready"] = True
+        return s
+
+    def apply(self, s, mv):
+        return hantalapay.play(s, {"inputs": list(mv.get("inputs", []))})
+
+    def ai(self, s, level):
+        return {"inputs": []}
+
+    def render(self, s, bottom, names, clickable, key, message="", clocks=None, clock_running=False, room=""):
+        view = {k: v for k, v in s.items() if k != "inputs"}
+        labels = {"center": tr("hp_center"), "front": tr("hp_front"), "khan": tr("hp_khan"), "start": tr("hp_start"),
+                  "throwBtn": tr("hp_throw"), "talapai": tr("hp_talapai"), "grab": tr("hp_grab"), "flick": tr("hp_flick"),
+                  "goal": tr("hp_goal"), "throwN": tr("hp_throwN"), "power": tr("hp_power"), "aim": tr("hp_aim"),
+                  "yourThrow": tr("hp_your_throw"), "throws": tr("hp_throws"), "drawLot": tr("hp_draw"),
+                  "alshy": tr("hp_alshy"), "taike": tr("hp_taike"), "buk": tr("hp_buk"), "shik": tr("hp_shik"),
+                  "ompy": tr("hp_ompy"), "shonkai": tr("hp_shonkai"),
+                  "falseStart": tr("hp_false"), "nextTurn": tr("hp_next"), "yourFlick": tr("hp_your_flick"),
+                  "flicks": tr("hp_flicks"), "hit": tr("hp_hit"), "miss": tr("hp_miss"), "youWin": tr("hp_you_win"),
+                  "kids": tr("hp_kids")}
+        val = _hantalapay(state=view, me=bottom, names=names,
+                          ai_name=tr("hp_vs", n=s.get("n_ai", 3), lvl=tr(f"lv_{s.get('level', 'medium')}")),
+                          clickable=clickable, message=message, labels=labels, room=room, token=tick(), key=key,
+                          default=None)
+        v = take(val, key)
+        if v and clickable:
+            return {"inputs": v.get("inputs", [])}
+        return None
+
+    def score(self, s):
+        return hantalapay.score(s)
+
+    def status(self, s, names):
+        parts = [tr("hp_result", name=names[p], s=r["score"], b=r["best"]) for p, r in enumerate(s["rides"]) if r]
+        if not s["over"]:
+            parts.append(tr("hp_your_turn"))
+        return " · ".join(parts)
+
+    def hint(self, s):
+        return tr("hp_hint")
+
+    def coach(self, cfg, s, lang):
+        pos = f"Khantalapai vs {s.get('n_ai')} AI ({s.get('level')}), target {s.get('target')}, stats {s['stats'][s['turn']]}."
+        return llm.coach_generic(cfg, "hantalapay", pos, tr("hp_hint"), lang)
+
+    def rewards(self, s, players, level, champ, mode):
+        w = s.get("winner")
+        if w not in (0, 1):
+            return []
+        name, reg = players[w]
+        if not reg or (mode == "ai" and not champ and level not in ("hard", "master", "llm")):
+            return []
+        db.boost_horse(name, hantalapay.STATS, 5)
+        return [tr("hp_bonus", p=5)]
+
+    def anim_delay(self, s):
+        return 0.3
+
+
 SPECS = {"togyz": Togyz(), "asyk": Asyk(), "doyby": Doyby(), "jamby": Jamby(), "kyzkuu": Kyzkuu(), "tenge": Tenge(),
-         "kokpar": Kokpar(), "audaryspak": Audaryspak(), "kures": Kures()}
+         "kokpar": Kokpar(), "audaryspak": Audaryspak(), "kures": Kures(), "hantalapay": Hantalapay()}

@@ -38,22 +38,23 @@
     // қаңқаны есептеу (дүниедегі нүктелер)
     function skeleton(M0, ps) {
       const { mul, T, RX, RY, RZ, Sc } = G3;
-      const M = mul(M0, Sc(S, S, S));
+      const SS = ps.S || S, HD = ps.head || 1;
+      const M = mul(M0, Sc(SS, SS, SS));
       const Mp = mul(mul(M, T(ps.hip[0], ps.hip[1], ps.hip[2])), RZ(-ps.pel));
       const Mc = mul(mul(mul(mul(Mp, T(0, 0.1, 0)), RY(ps.yaw)), RX(ps.roll)), RZ(-ps.pitch));
-      const Mh = mul(mul(mul(mul(Mc, T(0.03, 0.62, 0)), RZ(-ps.hp)), RY(ps.hy)), RX(ps.hr));
+      const Mh = mul(mul(mul(mul(mul(Mc, T(0.03, 0.62, 0)), RZ(-ps.hp)), RY(ps.hy)), RX(ps.hr)), Sc(HD, HD, HD));
       const fwd = norm(sub(xf(M, [1, 0, 0]), xf(M, [0, 0, 0])));
-      const sk = { M, Mp, Mc, Mh, fwd, S, legs: [], arms: [] };
+      const sk = { M, Mp, Mc, Mh, fwd, S: SS, legs: [], arms: [] }, kp = ps.kp || [1.0, 0.6];
       [1, -1].forEach((sd, i) => {
         const hip = xf(Mp, [0, -0.04, sd * 0.11]);
         const foot = xf(M, ps.feet[i]);
-        const pole = add(add(hip, mulv(fwd, 1.0)), xf(M, [0, 0, sd * 0.1]).map((v, j) => (v - xf(M, [0, 0, 0])[j]) * 0.6));
-        const [knee, ank] = ik(hip, foot, 0.45 * S, 0.43 * S, pole);
+        const pole = add(add(hip, mulv(fwd, kp[0])), xf(M, [0, 0, sd * 0.1]).map((v, j) => (v - xf(M, [0, 0, 0])[j]) * kp[1] * 10 * 0.1));
+        const [knee, ank] = ik(hip, foot, 0.45 * SS, 0.43 * SS, pole);
         sk.legs.push({ hip, knee, ank, sd, toe: ps.toe[i] });
         const sh = xf(Mc, [0, 0.44, sd * 0.24]);
         const hand = ps.handsW ? ps.handsW[i] : xf(M, ps.hands[i]);
         const ep = add(add(sh, xf(Mc, [-0.4, -0.5, sd * 0.9])), mulv(xf(Mc, [0, 0, 0]), -1));
-        const [elb, wr] = ik(sh, hand, 0.31 * S, 0.29 * S, ep);
+        const [elb, wr] = ik(sh, hand, 0.31 * SS, 0.29 * SS, ep);
         sk.arms.push({ sh, elb, wr, sd });
       });
       return sk;
@@ -66,7 +67,7 @@
     // ---- сурет салу
     function draw(sk, k) {
       const { P, seg, SPH, CYL, TAPER, BOX, I4, mul, T } = G3, W = I4(), s = sk.S;
-      const jacket = hex(k.jacket), jacket2 = hex(k.jacket2), trim = hex(k.trim), belt = hex(k.belt), pants = hex(k.pants),
+      const jacket = hex(k.jacket), jacket2 = hex(k.jacket2), trim = hex(k.trim), belt = k.belt ? hex(k.belt) : null, pants = hex(k.pants),
         boot = hex(k.boot), skin = hex(k.skin), skin2 = hex(k.skin2), hair = hex(k.hair), lip = hex(k.lip);
       const eyeW = [0.93, 0.91, 0.87], iris = [0.16, 0.09, 0.05];
       // аяқтар: кең шалбар, мәсі
@@ -87,10 +88,18 @@
       P(Mp, SPH, [-0.07, -0.02, -0.08], null, [0.1, 0.11, 0.1], pants, 0.05);
       // күрте (етек)
       P(Mp, SPH, [0.0, 0.09, 0], null, [0.185, 0.12, 0.235], jacket, 0.08);
-      P(Mp, CYL, [0, 0.11, 0], null, [0.2, 0.065, 0.245], belt, 0.25);                  // белбеу
-      P(Mp, BOX, [0.19, 0.11, 0.06], [0, 0, 0], [0.04, 0.08, 0.07], belt, 0.25);        // түйін
-      seg(Mp, [0.2, 0.09, 0.07], [0.205, -0.06, 0.1], 0.022, belt, "CYL", 0.2);
-      seg(Mp, [0.2, 0.09, 0.05], [0.21, -0.05, 0.02], 0.022, belt, "CYL", 0.2);
+      if (k.belt) {
+        P(Mp, CYL, [0, 0.11, 0], null, [0.2, 0.065, 0.245], belt, 0.25);                  // белбеу
+        P(Mp, BOX, [0.19, 0.11, 0.06], [0, 0, 0], [0.04, 0.08, 0.07], belt, 0.25);        // түйін
+        seg(Mp, [0.2, 0.09, 0.07], [0.205, -0.06, 0.1], 0.022, belt, "CYL", 0.2);
+        seg(Mp, [0.2, 0.09, 0.05], [0.21, -0.05, 0.02], 0.022, belt, "CYL", 0.2);
+      }
+      if (k.skirt) {   // ұзын көйлек етегі — әрқашан тік салбырайды
+        const Ms = new Float32Array(sk.M), pc = xf(Mp, [0, 0.02, 0]); Ms[12] = pc[0]; Ms[13] = pc[1]; Ms[14] = pc[2];
+        const hgt = Math.max(0.25, Math.min(0.62, pc[1] / s - 0.08));
+        P(Ms, TAPER, [0.04, -hgt / 2, 0], null, [0.23, hgt, 0.26], hex(k.skirt), 0.08);
+        P(Ms, CYL, [0.04, -hgt + 0.01, 0], null, [0.232, 0.022, 0.262], hex(k.gold || "#d9a520"), 0.5);
+      }
       // кеуде (күрте), бұлшықеттер
       P(Mc, SPH, [0.02, 0.1, 0], null, [0.19, 0.2, 0.23], jacket, 0.08);                 // іш
       P(Mc, SPH, [0.0, 0.33, 0], null, [0.18, 0.21, 0.27], jacket, 0.08);                // кеуде
@@ -98,6 +107,22 @@
       P(Mc, SPH, [-0.03, 0.48, 0], null, [0.12, 0.08, 0.2], jacket, 0.06);               // трапеция
       P(Mc, SPH, [0.1, 0.5, 0], null, [0.05, 0.05, 0.065], skin, 0.12);               // ашық жаға
       [1, -1].forEach((sd) => P(Mc, SPH, [0.0, 0.44, sd * 0.25], null, [0.092, 0.088, 0.092], jacket, 0.08));   // иық
+      if (k.vest) {   // камзол: алтын оюлы жиек
+        const v = hex(k.vest), g = hex(k.gold || "#d9a520");
+        P(Mc, SPH, [0.02, 0.11, 0], null, [0.2, 0.21, 0.24], v, 0.18);
+        P(Mc, SPH, [0.0, 0.33, 0], null, [0.188, 0.218, 0.278], v, 0.18);
+        P(Mc, SPH, [-0.06, 0.36, 0], null, [0.158, 0.208, 0.258], v, 0.15);
+        P(Mc, SPH, [0.16, 0.34, 0], null, [0.04, 0.15, 0.06], jacket, 0.1);               // ақ көйлек (V)
+        [1, -1].forEach((sd) => {
+          seg(Mc, [0.17, 0.48, sd * 0.07], [0.205, 0.22, sd * 0.045], 0.013, g, "CYL", 0.7);
+          seg(Mc, [0.205, 0.22, sd * 0.045], [0.21, -0.06, sd * 0.06], 0.013, g, "CYL", 0.7);
+          P(Mc, SPH, [0.19, 0.3, sd * 0.12], [sd * 0.4, 0, 0], [0.012, 0.035, 0.022], g, 0.7);  // қошқар мүйіз
+          P(Mc, SPH, [0.185, 0.27, sd * 0.15], null, [0.012, 0.02, 0.02], g, 0.7);
+          P(Mc, SPH, [0.19, 0.08, sd * 0.13], null, [0.012, 0.03, 0.03], g, 0.7);
+          P(Mc, SPH, [0.0, 0.47, sd * 0.2], null, [0.05, 0.02, 0.06], g, 0.6);              // иық жиегі
+        });
+        P(Mc, CYL, [0.02, -0.07, 0], null, [0.205, 0.022, 0.245], g, 0.7);                 // етек жиегі
+      }
       // қолдар
       sk.arms.forEach((a) => {
         seg(W, a.sh, a.elb, 0.085 * s, jacket, "TAPER", 0.08);
@@ -137,7 +162,19 @@
       P(Mh, SPH, [-0.012, 0.142, 0], null, [0.103, 0.08, 0.093], hair, 0.15);
       P(Mh, SPH, [0.055, 0.168, 0], null, [0.048, 0.028, 0.078], hair, 0.15);
       P(Mh, SPH, [-0.05, 0.09, 0], null, [0.065, 0.075, 0.087], hair, 0.1);
-      if (k.cap) { P(Mh, CYL, [-0.01, 0.2, 0], null, [0.1, 0.04, 0.1], hex(k.cap), 0.2); P(Mh, SPH, [-0.01, 0.22, 0], null, [0.1, 0.035, 0.1], hex(k.cap), 0.2); }
+      if (k.braids) [1, -1].forEach((sd) => {   // бұрым
+        const a = xf(Mh, [-0.07, 0.07, sd * 0.07]), b = xf(Mh, [-0.1, -0.12, sd * 0.1]), c = xf(Mh, [-0.08, -0.3, sd * 0.12]);
+        seg(W, a, b, 0.026 * s, hair, "TAPER", 0.2); seg(W, b, c, 0.02 * s, hair, "TAPER", 0.2);
+        P(W, SPH, c, null, [0.022 * s, 0.03 * s, 0.022 * s], hex(k.ribbon || "#c0392b"), 0.4);
+      });
+      if (k.cap) {   // тақия: алтын оюлы
+        const cp = hex(k.cap), g = hex(k.gold || "#d9a520");
+        P(Mh, CYL, [-0.01, 0.195, 0], null, [0.1, 0.055, 0.1], cp, 0.25);
+        P(Mh, SPH, [-0.01, 0.222, 0], null, [0.1, 0.03, 0.1], cp, 0.25);
+        P(Mh, CYL, [-0.01, 0.172, 0], null, [0.103, 0.016, 0.103], g, 0.7);
+        for (let q = 0; q < 8; q++) { const a = q / 8 * 6.2832; P(Mh, SPH, [-0.01 + Math.cos(a) * 0.1, 0.2, Math.sin(a) * 0.1], null, [0.012, 0.018, 0.012], g, 0.7); }
+        if (k.uki) seg(Mh, [-0.01, 0.24, 0], [-0.03, 0.34, 0.01], 0.022, [0.97, 0.96, 0.94], "TAPER", 0.1);   // үкі
+      }
     }
 
     function shadow(m, x, z, a) { G3.P(m, G3.SPH, [x, 0.012, z], null, [0.45, 0.004, 0.45], [0.1, 0.08, 0.05], 0, a == null ? 0.35 : a); }

@@ -443,11 +443,11 @@
 
     const VS = `attribute vec3 p; attribute vec3 n; attribute vec4 m0; attribute vec4 m1; attribute vec4 m2; attribute vec4 m3; attribute vec4 ic; attribute float ia;
       uniform mat4 VP; varying vec3 vN; varying vec3 vW; varying vec4 vC; varying float vA;
-      void main(){ mat4 M = mat4(m0, m1, m2, m3); vec4 w = M * vec4(p, 1.0); vW = w.xyz; vN = mat3(M) * n; vC = ic; vA = ia; gl_Position = VP * w; }`;
+      void main(){ mat4 M = mat4(m0, m1, m2, m3); vec4 w = M * vec4(p, 1.0); vW = w.xyz; vec3 sc = vec3(dot(m0.xyz, m0.xyz), dot(m1.xyz, m1.xyz), dot(m2.xyz, m2.xyz)); vN = mat3(M) * (n / max(sc, vec3(1e-8))); vC = ic; vA = ia; gl_Position = VP * w; }`;
     const FS = `precision mediump float; varying vec3 vN; varying vec3 vW; varying vec4 vC; varying float vA;
       uniform vec3 L; uniform vec3 E; uniform vec3 F; uniform vec2 FR;
       void main(){
-        vec3 n = normalize(vN); if (!gl_FrontFacing) n = -n;
+        vec3 n = normalize(vN); if (dot(n, E - vW) < 0.0) n = -n;
         float d = max(dot(n, L), 0.0); float h = 0.5 + 0.5 * n.y;
         vec3 amb = mix(vec3(0.40, 0.33, 0.24), vec3(0.60, 0.68, 0.80), h) * 0.62;
         vec3 v = normalize(E - vW); vec3 r = reflect(-L, n);

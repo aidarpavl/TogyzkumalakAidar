@@ -117,6 +117,7 @@ header[data-testid="stHeader"], [data-testid="stDecoration"], [data-testid="stSt
 .gc-kyzkuu {background: linear-gradient(135deg, #7a1f4e, #c0392b 55%, #f5b041);}
 .gc-tenge {background: linear-gradient(135deg, #6b4a12, #b8860b 55%, #f5c542);}
 .gc-kokpar {background: linear-gradient(135deg, #1d3d6e, #2e6b3a 50%, #a51d2a);}
+.gc-hantalapay {background: linear-gradient(135deg, #1d4c8f, #d9a520 50%, #b3202e);}
 .gc-kures {background: linear-gradient(135deg, #1f5fa0, #d9a520 55%, #b0202e);}
 .gc-audaryspak {background: linear-gradient(135deg, #7a4419, #b8862f 50%, #1d5a8e);}
 .podium {display: flex; gap: 10px; justify-content: center; align-items: flex-end; margin: 6px 0 14px;}

@@ -127,6 +127,9 @@ RULES_BY_GAME = {
               "rock-paper-scissors (rock beats pull, pull beats push, push beats rock); HOLD protects but is weak to push. "
               "When the opponent's balance is low, throws open (trip, hook, twist, hip throw, belt lift, back throw); "
               "release in the green zone; throw on the back = clean win, else 1-3 points."),
+    "hantalapay": ("Khantalapai: kids sit in a circle; the thrower scatters 11 asyks (10 bones + red Khan). If the Khan "
+                   "lands ALSHY everyone shouts TALAPAI and grabs (bone 1 pt, Khan 5, first shout +1); shouting when it "
+                   "is not alshy costs 2. If the Khan lands TAIKE the thrower flicks pairs (+2). Race to 50/80/100."),
     "asyk": ("Asyk atu (Kazakh knucklebones): asyks stand inside a ring; you shoot your heavy saqa from the "
              "bottom line; asyks knocked out of the ring are yours; if you capture any, you shoot again."),
 }

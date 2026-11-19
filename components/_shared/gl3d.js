@@ -74,22 +74,31 @@
     }
     function record(fn) { REC = []; fn(); const r = REC; REC = []; return r; }
 
-    const VS = `attribute vec3 p; attribute vec3 n; attribute vec4 m0; attribute vec4 m1; attribute vec4 m2; attribute vec4 m3; attribute vec4 ic; attribute float ia;
-      uniform mat4 VP; varying vec3 vN; varying vec3 vW; varying vec4 vC; varying float vA;
-      void main(){ mat4 M = mat4(m0, m1, m2, m3); vec4 w = M * vec4(p, 1.0); vW = w.xyz; vN = mat3(M) * n; vC = ic; vA = ia; gl_Position = VP * w; }`;
-    const FS = `precision mediump float; varying vec3 vN; varying vec3 vW; varying vec4 vC; varying float vA;
+    const VS = `attribute vec3 p; attribute vec3 n; attribute vec4 m0; attribute vec4 m1; attribute vec4 m2; attribute vec4 m3; attribute vec4 ic; attribute float ia; attribute float ao;
+      uniform mat4 VP; varying vec3 vN; varying vec3 vW; varying vec4 vC; varying float vA; varying float vO;
+      void main(){ mat4 M = mat4(m0, m1, m2, m3); vec4 w = M * vec4(p, 1.0); vW = w.xyz; vec3 sc = vec3(dot(m0.xyz, m0.xyz), dot(m1.xyz, m1.xyz), dot(m2.xyz, m2.xyz)); vN = mat3(M) * (n / max(sc, vec3(1e-8))); vC = ic; vA = ia; vO = ao; gl_Position = VP * w; }`;
+    const FS = `precision mediump float; varying vec3 vN; varying vec3 vW; varying vec4 vC; varying float vA; varying float vO;
       uniform vec3 L; uniform vec3 E; uniform vec3 F; uniform vec2 FR;
       void main(){
-        vec3 n = normalize(vN); if (!gl_FrontFacing) n = -n;
+        vec3 n = normalize(vN); if (dot(n, E - vW) < 0.0) n = -n;
         float d = max(dot(n, L), 0.0); float h = 0.5 + 0.5 * n.y;
         vec3 amb = mix(vec3(0.40, 0.33, 0.24), vec3(0.60, 0.68, 0.80), h) * 0.62;
         vec3 v = normalize(E - vW); vec3 r = reflect(-L, n);
         float sp = pow(max(dot(r, v), 0.0), 20.0) * vC.a;
         float rim = pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.09;
-        vec3 col = vC.rgb * (amb + d * vec3(1.0, 0.95, 0.86) * 0.82) + sp + rim * vec3(1.0, 0.95, 0.85);
+        vec3 col = vC.rgb * (amb + d * vec3(1.0, 0.95, 0.86) * 0.82) * vO + sp * vO + rim * vec3(1.0, 0.95, 0.85);
         float f = clamp((length(E - vW) - FR.x) / (FR.y - FR.x), 0.0, 1.0);
         gl_FragColor = vec4(mix(col, F, f * f), vA);
       }`;
+
+    // ---- суреттен жасалған «спрайттар» (камераға қарап тұратын суреттер, тереңдік тесті бар)
+    let ATLAS = null, ATLAS_N = 1;
+    const setAtlas = (img, n) => { ATLAS = img; ATLAS_N = n; };
+    const SVS = `attribute vec2 q; uniform mat4 VP; uniform vec3 C; uniform vec3 R; uniform vec3 U; uniform vec2 S; uniform float RO; uniform vec4 UV; uniform float FL; varying vec2 vU;
+      void main(){ float c = cos(RO), s = sin(RO); vec2 r = vec2(c * q.x - s * q.y, s * q.x + c * q.y);
+        vec3 w = C + R * (r.x * S.x) + U * (r.y * S.y); vU = vec2(UV.x + (FL > 0.5 ? 0.5 - q.x : q.x + 0.5) * UV.z, UV.y + (0.5 - q.y) * UV.w); gl_Position = VP * vec4(w, 1.0); }`;
+    const SFS = `precision mediump float; uniform sampler2D TX; uniform vec3 TI; uniform vec3 FG; varying vec2 vU;
+      void main(){ vec4 t = texture2D(TX, vU); if (t.a < 0.4) discard; float g = t.r; vec3 c = TI * mix(0.18, 1.08, g) * mix(0.55, 1.0, smoothstep(0.15, 0.9, g)); gl_FragColor = vec4(c, 1.0); }`;
 
     // ---- бір камера = бір WebGL кенеп
     function makeView(cv, bw, bh) {
@@ -104,24 +113,51 @@
       if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) return null;
       gl.useProgram(pr);
       const U = {}; ["VP", "L", "E", "F", "FR"].forEach((k) => U[k] = gl.getUniformLocation(pr, k));
-      const A = {}; ["p", "n", "m0", "m1", "m2", "m3", "ic", "ia"].forEach((k) => A[k] = gl.getAttribLocation(pr, k));
+      const A = {}; ["p", "n", "m0", "m1", "m2", "m3", "ic", "ia", "ao"].forEach((k) => A[k] = gl.getAttribLocation(pr, k));
       const meshes = {};
-      Object.entries(GEO).forEach(([key, [Pp, Nn, Ii]]) => {
+      Object.entries(GEO).forEach(([key, [Pp, Nn, Ii, Oo]]) => {
         const b = (d, t) => { const x = gl.createBuffer(); gl.bindBuffer(t, x); gl.bufferData(t, d, gl.STATIC_DRAW); return x; };
-        meshes[key] = { p: b(new Float32Array(Pp), gl.ARRAY_BUFFER), n: b(new Float32Array(Nn), gl.ARRAY_BUFFER), i: b(new Uint16Array(Ii), gl.ELEMENT_ARRAY_BUFFER), c: Ii.length };
+        meshes[key] = { p: b(new Float32Array(Pp), gl.ARRAY_BUFFER), n: b(new Float32Array(Nn), gl.ARRAY_BUFFER), i: b(new Uint16Array(Ii), gl.ELEMENT_ARRAY_BUFFER), c: Ii.length,
+          o: b(Oo ? new Float32Array(Oo) : new Float32Array(Pp.length / 3).fill(1), gl.ARRAY_BUFFER) };
       });
       const ibuf = gl.createBuffer();
       gl.enable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      let VPm = I4(), w = bw, h = bh, q = 1;
+      let VPm = I4(), w = bw, h = bh, q = 1, CR = [1, 0, 0], CU = [0, 1, 0];
+      // спрайт бағдарламасы
+      const pr2 = gl.createProgram(); gl.attachShader(pr2, sh(gl.VERTEX_SHADER, SVS)); gl.attachShader(pr2, sh(gl.FRAGMENT_SHADER, SFS)); gl.linkProgram(pr2);
+      const ok2 = gl.getProgramParameter(pr2, gl.LINK_STATUS), U2 = {}, qbuf = gl.createBuffer(); let tex = null, texImg = null;
+      ["VP", "C", "R", "U", "S", "RO", "UV", "FL", "TX", "TI"].forEach((k) => U2[k] = gl.getUniformLocation(pr2, k));
+      const A2q = gl.getAttribLocation(pr2, "q");
+      gl.bindBuffer(gl.ARRAY_BUFFER, qbuf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5]), gl.STATIC_DRAW);
       const view = {
         setQuality(nq) { q = nq; cv.width = Math.round(bw * q); cv.height = Math.round(bh * q); },
         camera(eye, target, fov, fog) {
           VPm = mul(persp(fov || 0.7, bw / bh, 0.1, 400), look(eye, target, [0, 1, 0]));
+          { const fx = target[0] - eye[0], fy = target[1] - eye[1], fz = target[2] - eye[2], fl = Math.hypot(fx, fy, fz) || 1, f = [fx / fl, fy / fl, fz / fl];
+            let r = [f[1] * 0 - f[2] * 1, f[2] * 0 - f[0] * 0, f[0] * 1 - f[1] * 0]; const rl = Math.hypot(r[0], r[1], r[2]) || 1; r = r.map((v) => v / rl);
+            CR = r; CU = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]]; }
           gl.viewport(0, 0, cv.width, cv.height);
           gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
           const L = [0.45, 0.8, 0.35], ll = Math.hypot(...L);
           gl.uniformMatrix4fv(U.VP, false, VPm); gl.uniform3fv(U.L, L.map((v) => v / ll)); gl.uniform3fv(U.E, eye);
           gl.uniform3fv(U.F, fog || [0.84, 0.9, 0.93]); gl.uniform2fv(U.FR, [25, 170]);
+        },
+        sprites(list) {   // [{p, w, h, cell, tint, rot, flip}]
+          if (!ok2 || !ATLAS || !ATLAS.complete || !list.length) return;
+          if (texImg !== ATLAS) { tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, ATLAS);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); texImg = ATLAS; }
+          ["p", "n", "m0", "m1", "m2", "m3", "ic", "ia", "ao"].forEach((k) => { if (A[k] >= 0) { gl.disableVertexAttribArray(A[k]); EXT.vertexAttribDivisorANGLE(A[k], 0); } });
+          gl.useProgram(pr2); gl.uniformMatrix4fv(U2.VP, false, VPm); gl.uniform3fv(U2.R, CR); gl.uniform3fv(U2.U, CU);
+          gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex); gl.uniform1i(U2.TX, 0);
+          gl.bindBuffer(gl.ARRAY_BUFFER, qbuf); gl.enableVertexAttribArray(A2q); gl.vertexAttribPointer(A2q, 2, gl.FLOAT, false, 0, 0);
+          for (const d of list) {
+            gl.uniform3fv(U2.C, d.p); gl.uniform2fv(U2.S, [d.w, d.h]); gl.uniform1f(U2.RO, d.rot || 0); gl.uniform1f(U2.FL, d.flip ? 1 : 0);
+            gl.uniform4fv(U2.UV, [d.cell / ATLAS_N, 0, 1 / ATLAS_N, 1]); gl.uniform3fv(U2.TI, d.tint);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+          }
+          gl.disableVertexAttribArray(A2q); gl.useProgram(pr);
         },
         project(p) {
           const V = VPm, x = V[0] * p[0] + V[4] * p[1] + V[8] * p[2] + V[12], y = V[1] * p[0] + V[5] * p[1] + V[9] * p[2] + V[13];
@@ -140,6 +176,7 @@
             gl.enableVertexAttribArray(A.ia); gl.vertexAttribPointer(A.ia, 1, gl.FLOAT, false, st, 80); EXT.vertexAttribDivisorANGLE(A.ia, 1);
             gl.bindBuffer(gl.ARRAY_BUFFER, msh.p); gl.enableVertexAttribArray(A.p); gl.vertexAttribPointer(A.p, 3, gl.FLOAT, false, 0, 0);
             gl.bindBuffer(gl.ARRAY_BUFFER, msh.n); gl.enableVertexAttribArray(A.n); gl.vertexAttribPointer(A.n, 3, gl.FLOAT, false, 0, 0);
+            if (A.ao >= 0) { gl.bindBuffer(gl.ARRAY_BUFFER, msh.o); gl.enableVertexAttribArray(A.ao); gl.vertexAttribPointer(A.ao, 1, gl.FLOAT, false, 0, 0); }
             gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, msh.i);
             EXT.drawElementsInstancedANGLE(gl.TRIANGLES, msh.c, gl.UNSIGNED_SHORT, 0, n);
           };
@@ -151,7 +188,8 @@
       };
       return view;
     }
-    return { SPH: "SPH", CYL: "CYL", CONE: "CONE", TAPER: "TAPER", BOX: "BOX", I4, mul, T, Sc, RX, RY, RZ, P, seg, record, makeView };
+    const addGeo = (key, g) => { GEO[key] = g; };   // өз пішіні (makeView-ден бұрын)
+    return { SPH: "SPH", CYL: "CYL", CONE: "CONE", TAPER: "TAPER", BOX: "BOX", I4, mul, T, Sc, RX, RY, RZ, P, seg, record, makeView, addGeo, setAtlas };
   })();
 
   const hex = (h) => [parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255];

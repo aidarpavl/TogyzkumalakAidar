@@ -21,7 +21,7 @@ _URL = None
 _PG = False
 _INIT = False
 
-GAMES = ("togyz", "asyk", "doyby", "jamby", "kyzkuu", "tenge", "kokpar", "audaryspak", "kures")
+GAMES = ("togyz", "asyk", "doyby", "jamby", "kyzkuu", "tenge", "kokpar", "audaryspak", "kures", "hantalapay")
 
 # Чемпионат параметрлері (settings кестесі арқылы өзгертуге болады)
 DEFAULTS = {
@@ -203,6 +203,11 @@ MIGRATIONS = [
     ("horses", "w_technique", "DOUBLE PRECISION NOT NULL DEFAULT 1"),
     ("horses", "w_speed", "DOUBLE PRECISION NOT NULL DEFAULT 1"),
     ("horses", "w_bonus", "INTEGER NOT NULL DEFAULT 0"),
+    ("horses", "h_reaction", "DOUBLE PRECISION NOT NULL DEFAULT 1"),
+    ("horses", "h_hands", "DOUBLE PRECISION NOT NULL DEFAULT 1"),
+    ("horses", "h_aim", "DOUBLE PRECISION NOT NULL DEFAULT 1"),
+    ("horses", "h_throw", "DOUBLE PRECISION NOT NULL DEFAULT 1"),
+    ("horses", "h_bonus", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 
@@ -691,8 +696,9 @@ def decide_payment(pid: str, approve: bool, admin: str, note: str = "") -> bool:
 HORSE_STATS = ("burst", "speed", "stamina", "reverse", "t_speed", "t_stamina", "t_accuracy",
                "k_speed", "k_accel", "k_stamina", "k_power", "k_agility",
                "a_stability", "a_agility", "a_stamina", "a_power", "a_grip", "a_balance",
-               "w_power", "w_grip", "w_stamina", "w_balance", "w_technique", "w_speed")
-BONUS_COLS = ("bonus", "t_bonus", "k_bonus", "a_bonus", "w_bonus")
+               "w_power", "w_grip", "w_stamina", "w_balance", "w_technique", "w_speed",
+               "h_reaction", "h_hands", "h_aim", "h_throw")
+BONUS_COLS = ("bonus", "t_bonus", "k_bonus", "a_bonus", "w_bonus", "h_bonus")
 
 
 def get_horse(username: str) -> dict:
